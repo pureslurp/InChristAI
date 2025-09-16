@@ -132,7 +132,7 @@ class TwitterAPI:
             # Use search API to find mentions (works with free tier)
             try:
                 # Search for mentions of the bot using search_recent_tweets
-                query = f"@{self.bot_username}"
+                query = f"@{self.bot_username} -is:retweet"  # Exclude retweets
                 logger.info(f"Searching for mentions with query: '{query}'")
                 
                 kwargs = {
@@ -149,23 +149,67 @@ class TwitterAPI:
                 logger.info(f"Search API returned: {type(tweets)}, has data: {hasattr(tweets, 'data') if tweets else False}")
                 
                 if tweets and hasattr(tweets, 'data') and tweets.data:
+                    logger.info(f"Raw tweets.data: {tweets.data}")
                     for tweet in tweets.data:
-                        mentions.append({
+                        mention_data = {
                             'id': tweet.id,
                             'text': tweet.text,
                             'author_id': tweet.author_id,
                             'created_at': tweet.created_at,
                             'conversation_id': tweet.conversation_id,
                             'in_reply_to_user_id': tweet.in_reply_to_user_id
-                        })
+                        }
+                        mentions.append(mention_data)
+                        logger.info(f"Found mention: {mention_data}")
                     logger.info(f"Found {len(mentions)} mentions via v2 search API")
                 else:
-                    logger.info("No mentions found via v2 search API (empty result)")
+                    logger.info(f"No mentions found - tweets: {tweets}, has data attr: {hasattr(tweets, 'data') if tweets else False}")
+                    if tweets and hasattr(tweets, 'data'):
+                        logger.info(f"tweets.data is: {tweets.data} (type: {type(tweets.data)})")
                     
                 return mentions
                 
             except Exception as e:
-                logger.warning(f"v2 search API failed: {e}, trying v1.1...")
+                logger.warning(f"v2 search API failed: {e}, trying alternative search...")
+                
+                # Try alternative search without filters
+                try:
+                    alt_query = self.bot_username  # Just the username without @
+                    logger.info(f"Trying alternative search with query: '{alt_query}'")
+                    
+                    alt_kwargs = {
+                        'query': alt_query,
+                        'max_results': min(count, 100),
+                        'tweet_fields': ['created_at', 'author_id', 'conversation_id', 'in_reply_to_user_id']
+                    }
+                    if since_id:
+                        alt_kwargs['since_id'] = since_id
+                        
+                    alt_tweets = self.client.search_recent_tweets(**alt_kwargs)
+                    logger.info(f"Alternative search returned: {type(alt_tweets)}, has data: {hasattr(alt_tweets, 'data') if alt_tweets else False}")
+                    
+                    if alt_tweets and hasattr(alt_tweets, 'data') and alt_tweets.data:
+                        logger.info(f"Alternative search found {len(alt_tweets.data)} potential mentions")
+                        for tweet in alt_tweets.data:
+                            # Filter for actual mentions in the text
+                            if f"@{self.bot_username.lower()}" in tweet.text.lower():
+                                mention_data = {
+                                    'id': tweet.id,
+                                    'text': tweet.text,
+                                    'author_id': tweet.author_id,
+                                    'created_at': tweet.created_at,
+                                    'conversation_id': tweet.conversation_id,
+                                    'in_reply_to_user_id': tweet.in_reply_to_user_id
+                                }
+                                mentions.append(mention_data)
+                                logger.info(f"Found mention via alternative search: {mention_data}")
+                        
+                        if mentions:
+                            logger.info(f"Found {len(mentions)} mentions via alternative search")
+                            return mentions
+                            
+                except Exception as alt_e:
+                    logger.warning(f"Alternative search also failed: {alt_e}, trying v1.1...")
             
             # Fallback to v1.1 API
             if hasattr(self, 'api_v1'):
