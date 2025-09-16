@@ -160,8 +160,7 @@ Remember: You represent Christ's love in every interaction. Be authentic, caring
         """Build a tailored prompt based on the intent and context"""
         base_prompt = f"Someone mentioned you on Twitter saying: '{mention_text}'"
         
-        if user_info:
-            base_prompt += f"\nUser info: @{user_info.get('username', 'unknown')}"
+        # Skip user info since we don't need username for replies
         
         if context:
             base_prompt += f"\nContext: {context}"
@@ -185,7 +184,7 @@ Remember: You represent Christ's love in every interaction. Be authentic, caring
         else:
             base_prompt += "\n\nRespond in a friendly, encouraging way that reflects Christian love."
         
-        base_prompt += "\n\nGenerate a tweet-length response (under 280 characters) that is warm, genuine, and helpful."
+        base_prompt += "\n\nGenerate a tweet-length response (under 280 characters) that is warm, genuine, and helpful. Do NOT include @username mentions - Twitter will handle reply tagging automatically."
         
         return base_prompt
 

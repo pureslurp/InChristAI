@@ -101,22 +101,22 @@ class InteractionHandler:
                 status = "NEW" if not self.last_mention_id or mention['id'] > self.last_mention_id else "OLD"
                 logger.info(f"  {i}. [{status}] {mention['text'][:50]}... (ID: {mention['id']}, Author: {mention['author_id']})")
             
-            # Filter to only new mentions for processing
-            new_mentions = []
-            if self.last_mention_id:
-                new_mentions = [m for m in all_mentions if m['id'] > self.last_mention_id]
-            else:
-                # If no last_mention_id, treat all as new
-                new_mentions = all_mentions
+            # Filter to only unprocessed mentions (check database for each)
+            unprocessed_mentions = []
+            for mention in all_mentions:
+                if not self._has_responded_to_tweet(mention['id']):
+                    unprocessed_mentions.append(mention)
+                else:
+                    logger.info(f"Skipping already processed mention: {mention['id']}")
             
-            if not new_mentions:
-                logger.info("No new mentions to process (all are already handled)")
+            if not unprocessed_mentions:
+                logger.info("No unprocessed mentions found (all have been responded to)")
                 return 0
             
-            logger.info(f"Processing {len(new_mentions)} new mentions...")
+            logger.info(f"Processing {len(unprocessed_mentions)} unprocessed mentions...")
             processed_count = 0
             
-            for mention in new_mentions:
+            for mention in unprocessed_mentions:
                 try:
                     # Update last mention ID
                     if not self.last_mention_id or mention['id'] > self.last_mention_id:
@@ -273,8 +273,9 @@ class InteractionHandler:
             logger.error(f"Error updating interaction response: {e}")
 
     def _has_responded_to_tweet(self, tweet_id: str) -> bool:
-        """Check if we've already responded to a tweet"""
+        """Check if we've already responded to a tweet (database + Twitter API verification)"""
         try:
+            # First check our local database
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
@@ -282,10 +283,41 @@ class InteractionHandler:
             result = cursor.fetchone()
             
             conn.close()
-            return result is not None and result[0] is not None
+            
+            if result is not None and result[0] is not None:
+                logger.info(f"Database shows we responded to {tweet_id}")
+                return True
+            
+            # Fallback: Check Twitter to see if we've replied to this tweet
+            # This handles database resets between deployments
+            logger.info(f"Database check failed, verifying via Twitter API for tweet {tweet_id}")
+            return self._check_twitter_for_our_reply(tweet_id)
             
         except Exception as e:
             logger.error(f"Error checking if responded to tweet: {e}")
+            # If database fails, still check Twitter as fallback
+            return self._check_twitter_for_our_reply(tweet_id)
+    
+    def _check_twitter_for_our_reply(self, tweet_id: str) -> bool:
+        """Check Twitter directly to see if we've already replied to a tweet"""
+        try:
+            # Use our Twitter search to find tweets that are replies to this tweet
+            search_query = f"in_reply_to_tweet_id:{tweet_id} from:{self.twitter_api.bot_username}"
+            logger.info(f"Searching Twitter for our replies: {search_query}")
+            
+            # Search for our replies to this tweet
+            search_results = self.twitter_api.search_tweets(search_query, count=5)
+            
+            if search_results:
+                logger.info(f"Found {len(search_results)} existing replies from us to tweet {tweet_id}")
+                return True
+            else:
+                logger.info(f"No existing replies found for tweet {tweet_id}")
+                return False
+                
+        except Exception as e:
+            logger.warning(f"Error checking Twitter for existing replies to {tweet_id}: {e}")
+            # If Twitter check fails, err on side of caution - assume not replied
             return False
 
     def _is_user_rate_limited(self, user_id: str) -> bool:
