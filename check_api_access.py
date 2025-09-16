@@ -2,7 +2,11 @@
 Diagnostic script to check Twitter API access level
 """
 import tweepy
-import config
+# Use cloud config if available, fallback to local config
+try:
+    import config_cloud as config
+except ImportError:
+    import config
 
 def check_api_access():
     """Check what level of API access we have"""

@@ -5,7 +5,11 @@ import openai
 import logging
 from typing import Dict, List, Optional
 import re
-import config
+# Use cloud config if available, fallback to local config
+try:
+    import config_cloud as config
+except ImportError:
+    import config
 from bible_api import BibleAPI
 
 logger = logging.getLogger(__name__)

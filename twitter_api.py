@@ -4,7 +4,11 @@ Twitter API integration for posting and monitoring mentions
 import tweepy
 import logging
 from typing import List, Dict, Optional
-import config
+# Use cloud config if available, fallback to local config
+try:
+    import config_cloud as config
+except ImportError:
+    import config
 import time
 
 logger = logging.getLogger(__name__)

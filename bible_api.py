@@ -5,7 +5,11 @@ import requests
 import random
 import logging
 from typing import Dict, Optional, List
-import config
+# Use cloud config if available, fallback to local config
+try:
+    import config_cloud as config
+except ImportError:
+    import config
 
 logger = logging.getLogger(__name__)
 
