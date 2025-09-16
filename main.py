@@ -112,13 +112,12 @@ class InChristAI:
             schedule.every().day.at(posting_time).do(self._post_daily_verse)
             logger.info(f"Scheduled daily verse posting at {posting_time}")
             
-            # Check mentions once on startup for testing
-            logger.info("Checking mentions on startup for testing...")
-            self._check_mentions()
+            # Startup mentions check removed - will check on schedule only
+            logger.info("Skipping startup mention check - will begin checking on schedule")
             
-            # Schedule mention checking every 6 hours (more reliable than fixed times)
-            schedule.every(6).hours.do(self._check_mentions)
-            logger.info("Scheduled mention checking every 6 hours to stay within API quota")
+            # Schedule mention checking every 20 minutes (respects 15-min rate limit with buffer)
+            schedule.every(20).minutes.do(self._check_mentions)
+            logger.info("Scheduled mention checking every 20 minutes (within API rate limits)")
             
             # Schedule daily cleanup at midnight
             schedule.every().day.at("00:00").do(self._daily_cleanup)

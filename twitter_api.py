@@ -333,6 +333,7 @@ class TwitterAPI:
             # Fallback to v1.1 API
             if hasattr(self, 'api_v1'):
                 logger.info("Attempting v1.1 API reply...")
+                logger.info(f"Using v1.1 endpoint: POST statuses/update with in_reply_to_status_id={tweet_id}")
                 reply = self.api_v1.update_status(
                     status=reply_text,
                     in_reply_to_status_id=tweet_id,
