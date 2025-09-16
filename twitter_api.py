@@ -52,17 +52,8 @@ class TwitterAPI:
     def verify_credentials(self) -> bool:
         """Verify that the API credentials are working"""
         try:
-            # Try v2 API first (OAuth 2.0)
-            if hasattr(self, 'client'):
-                try:
-                    me = self.client.get_me()
-                    if me.data:
-                        logger.info(f"Successfully authenticated as @{me.data.username} (OAuth 2.0)")
-                        return True
-                except Exception as e:
-                    logger.warning(f"OAuth 2.0 verification failed: {e}")
-            
-            # Fallback to v1.1 API
+            # Skip v2 API auth check (requires User Context, we only have App-Only)
+            # Go directly to v1.1 API which works with our auth setup
             if hasattr(self, 'api_v1'):
                 user = self.api_v1.verify_credentials()
                 if user:
