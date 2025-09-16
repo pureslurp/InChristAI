@@ -183,18 +183,18 @@ class InteractionHandler:
             # Create minimal user info from mention data (no API call needed)
             user_info = {
                 'id': mention['author_id'],
-                'username': f"TwitterUser{mention['author_id'][-4:]}",  # Clean identifier
+                'username': 'TwitterUser',  # Generic, since we don't need real username for replies
                 'name': 'Twitter User'
             }
             
             # Store interaction in database
             self._store_interaction(mention, user_info)
             
-            # Generate AI response (use generic greeting to avoid wrong username)
+            # Generate AI response (no username needed - Twitter handles reply tagging automatically)
             response_text = self.ai_generator.generate_response(
                 mention_text=mention['text'],
                 user_info=user_info,
-                context=f"Mention on Twitter from someone asking for spiritual guidance"
+                context=f"Someone on Twitter is asking for spiritual guidance"
             )
             
             if not response_text:
