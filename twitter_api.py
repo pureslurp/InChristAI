@@ -332,6 +332,7 @@ class TwitterAPI:
             
             # Fallback to v1.1 API
             if hasattr(self, 'api_v1'):
+                logger.info("Attempting v1.1 API reply...")
                 reply = self.api_v1.update_status(
                     status=reply_text,
                     in_reply_to_status_id=tweet_id,
@@ -340,6 +341,8 @@ class TwitterAPI:
                 
                 logger.info(f"Successfully replied via v1.1 API to tweet {tweet_id}: {reply.id}")
                 return str(reply.id)
+            else:
+                logger.error("api_v1 client not available - missing OAuth 1.0a credentials?")
             
             logger.error("No valid API client available for replying")
             return None
