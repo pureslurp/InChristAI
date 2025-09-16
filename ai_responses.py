@@ -25,9 +25,10 @@ class AIResponseGenerator:
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found in configuration")
         
-        # Initialize OpenAI client with error handling
+        # Initialize OpenAI client with error handling (v0.28.1 style)
         try:
-            self.client = openai.OpenAI(api_key=api_key)
+            openai.api_key = api_key
+            self.client = openai  # v0.28.1 uses global client
             logger.info("OpenAI client initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI client: {e}")
@@ -94,8 +95,8 @@ Remember: You represent Christ's love in every interaction. Be authentic, caring
             # Build the prompt based on intent
             prompt = self._build_prompt(mention_text, intent, user_info, context)
             
-            # Generate response using OpenAI
-            response = self.client.chat.completions.create(
+            # Generate response using OpenAI (v0.28.1 format)
+            response = self.client.ChatCompletion.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": self.system_prompt},
@@ -292,7 +293,7 @@ David, a major writer of the book of Psalms, explains that you should not put yo
 
 """
 
-            response = self.client.chat.completions.create(
+            response = self.client.ChatCompletion.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": self.system_prompt},

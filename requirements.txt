@@ -1,5 +1,5 @@
 tweepy==4.14.0
-openai==1.51.0
+openai==0.28.1
 requests==2.31.0
 python-dotenv==1.0.0
 schedule==1.2.0
@@ -7,3 +7,4 @@ sqlalchemy==2.0.23
 python-dateutil==2.8.2
 aiohttp==3.9.1
 psycopg2-binary==2.9.7
+httpx>=0.20.0,<0.25.0
