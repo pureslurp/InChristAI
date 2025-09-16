@@ -129,14 +129,20 @@ class TwitterAPI:
         try:
             mentions = []
             
-            # Try v2 API first
+            # Use search API to find mentions (works with free tier)
             try:
-                # Get the authenticated user's mentions using v2 API
-                tweets = self.client.get_mentions(
-                    max_results=min(count, 100),  # API limit is 100
-                    tweet_fields=['created_at', 'author_id', 'conversation_id', 'in_reply_to_user_id'],
-                    since_id=since_id
-                )
+                # Search for mentions of the bot using search_recent_tweets
+                query = f"@{self.bot_username}"
+                
+                kwargs = {
+                    'query': query,
+                    'max_results': min(count, 100),
+                    'tweet_fields': ['created_at', 'author_id', 'conversation_id', 'in_reply_to_user_id']
+                }
+                if since_id:
+                    kwargs['since_id'] = since_id
+                    
+                tweets = self.client.search_recent_tweets(**kwargs)
                 
                 if tweets.data:
                     for tweet in tweets.data:
@@ -149,11 +155,11 @@ class TwitterAPI:
                             'in_reply_to_user_id': tweet.in_reply_to_user_id
                         })
                         
-                logger.info(f"Found {len(mentions)} mentions via v2 API")
+                logger.info(f"Found {len(mentions)} mentions via v2 search API")
                 return mentions
                 
             except Exception as e:
-                logger.warning(f"v2 API mentions failed: {e}, trying v1.1...")
+                logger.warning(f"v2 search API failed: {e}, trying v1.1...")
             
             # Fallback to v1.1 API
             if hasattr(self, 'api_v1'):
