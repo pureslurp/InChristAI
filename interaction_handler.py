@@ -126,13 +126,14 @@ class InteractionHandler:
     def _should_respond_to_mention(self, mention: Dict) -> bool:
         """Determine if we should respond to a mention"""
         try:
-            # Don't respond to our own tweets
-            user_info = self.twitter_api.get_user_info(mention['author_id'])
-            if user_info and user_info['username'].lower() == self.twitter_api.bot_username.lower():
+            # Don't respond to our own tweets (check using our known user ID)
+            if mention['author_id'] == self.twitter_api.user_id:
+                logger.info(f"Skipping mention from ourselves: {mention['id']}")
                 return False
             
             # Check if already responded
             if self._has_responded_to_tweet(mention['id']):
+                logger.info(f"Already responded to tweet: {mention['id']}")
                 return False
             
             # Check for blocked words
@@ -143,10 +144,12 @@ class InteractionHandler:
             
             # Check user rate limiting
             if self._is_user_rate_limited(mention['author_id']):
+                logger.info(f"User is rate limited: {mention['author_id']}")
                 return False
             
             # Check hourly response limit
             if self._hourly_response_limit_reached():
+                logger.info(f"Hourly response limit reached")
                 return False
             
             return True
@@ -158,8 +161,12 @@ class InteractionHandler:
     def _process_single_mention(self, mention: Dict) -> bool:
         """Process a single mention and generate response"""
         try:
-            # Get user information
-            user_info = self.twitter_api.get_user_info(mention['author_id'])
+            # Create minimal user info from mention data (no API call needed)
+            user_info = {
+                'id': mention['author_id'],
+                'username': f"user_{mention['author_id'][-4:]}",  # Use last 4 digits as identifier
+                'name': 'Twitter User'
+            }
             
             # Store interaction in database
             self._store_interaction(mention, user_info)
@@ -168,7 +175,7 @@ class InteractionHandler:
             response_text = self.ai_generator.generate_response(
                 mention_text=mention['text'],
                 user_info=user_info,
-                context=f"Mention on Twitter from @{user_info['username'] if user_info else 'unknown'}"
+                context=f"Mention on Twitter from user {mention['author_id']}"
             )
             
             if not response_text:

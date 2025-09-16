@@ -47,6 +47,7 @@ class TwitterAPI:
             logger.info("Using OAuth 1.0a authentication")
         
         self.bot_username = config.BOT_USERNAME
+        self.user_id = config.TWITTER_USER_ID  # Set from config - never changes
         
     def verify_credentials(self) -> bool:
         """Verify that the API credentials are working"""
@@ -124,51 +125,45 @@ class TwitterAPI:
             logger.error(f"Failed to post tweet: {e}")
             return None
     
-    def get_mentions(self, since_id: Optional[str] = None, count: int = 20) -> List[Dict]:
+    def get_mentions_tweepy(self, since_id: Optional[str] = None, count: int = 20) -> List[Dict]:
         """Get recent mentions of the bot"""
         try:
             mentions = []
             
-            # Use mentions timeline API (confirmed available in free tier)
-            try:
-                # Get mentions using the proper mentions timeline endpoint
-                logger.info(f"Getting mentions timeline for @{self.bot_username}")
-                
-                kwargs = {
-                    'max_results': min(count, 100),
-                    'tweet_fields': ['created_at', 'author_id', 'conversation_id', 'in_reply_to_user_id']
-                }
-                if since_id:
-                    kwargs['since_id'] = since_id
-                    logger.info(f"Using since_id: {since_id}")
+            # Use v1.1 mentions_timeline (the correct and documented method)
+            if hasattr(self, 'api_v1'):
+                try:
+                    logger.info(f"Getting mentions via v1.1 mentions_timeline API")
                     
-                logger.info(f"Mentions timeline API call parameters: {kwargs}")
-                tweets = self.client.get_mentions_timeline(**kwargs)
-                logger.info(f"Mentions timeline API returned: {type(tweets)}, has data: {hasattr(tweets, 'data') if tweets else False}")
-                
-                if tweets and hasattr(tweets, 'data') and tweets.data:
-                    logger.info(f"Raw tweets.data: {tweets.data}")
-                    for tweet in tweets.data:
+                    # Use keyword arguments as required in tweepy v4
+                    kwargs = {'count': count, 'include_entities': True, 'tweet_mode': 'extended'}
+                    if since_id:
+                        kwargs['since_id'] = since_id
+                        logger.info(f"Using since_id: {since_id}")
+                    
+                    logger.info(f"v1.1 mentions_timeline parameters: {kwargs}")
+                    tweets = self.api_v1.mentions_timeline(**kwargs)
+                    logger.info(f"v1.1 API returned {len(tweets)} tweets")
+                    
+                    for tweet in tweets:
                         mention_data = {
-                            'id': tweet.id,
-                            'text': tweet.text,
-                            'author_id': tweet.author_id,
+                            'id': str(tweet.id),
+                            'text': tweet.full_text if hasattr(tweet, 'full_text') else tweet.text,
+                            'author_id': str(tweet.author.id),
                             'created_at': tweet.created_at,
-                            'conversation_id': tweet.conversation_id,
-                            'in_reply_to_user_id': tweet.in_reply_to_user_id
+                            'conversation_id': str(tweet.id),  # v1.1 doesn't have conversation_id
+                            'in_reply_to_user_id': str(tweet.in_reply_to_user_id) if tweet.in_reply_to_user_id else None
                         }
                         mentions.append(mention_data)
-                        logger.info(f"Found mention: {mention_data}")
-                    logger.info(f"Found {len(mentions)} mentions via mentions timeline API")
-                else:
-                    logger.info(f"No mentions found - tweets: {tweets}, has data attr: {hasattr(tweets, 'data') if tweets else False}")
-                    if tweets and hasattr(tweets, 'data'):
-                        logger.info(f"tweets.data is: {tweets.data} (type: {type(tweets.data)})")
+                        logger.info(f"Found mention: {tweet.full_text[:50] if hasattr(tweet, 'full_text') else tweet.text[:50]}... from @{tweet.author.screen_name}")
+                        
+                    logger.info(f"Found {len(mentions)} mentions via v1.1 mentions_timeline")
+                    return mentions
                     
-                return mentions
-                
-            except Exception as e:
-                logger.warning(f"Mentions timeline API failed: {e}, trying search fallback...")
+                except Exception as e:
+                    logger.warning(f"v1.1 mentions_timeline failed: {e}, trying search fallback...")
+            
+            # Fallback to v2 search API
                 
                 # Try alternative search without filters
                 try:
@@ -236,6 +231,87 @@ class TwitterAPI:
         except Exception as e:
             logger.error(f"Failed to get mentions: {e}")
             return []
+    
+    def get_mentions(self, since_id: Optional[str] = None, count: int = 20) -> List[Dict]:
+        """Get recent mentions using direct HTTP requests (bypasses tweepy limitations)"""
+        try:
+            import requests
+            
+            # Use user ID from config (no API calls needed)
+            logger.info(f"Using user ID from config for mentions: {self.user_id}")
+            
+            # Direct HTTP request to X API v2 mentions endpoint
+            url = f"https://api.x.com/2/users/{self.user_id}/mentions"
+            
+            headers = {
+                "Authorization": f"Bearer {self.bearer_token}",
+                "Content-Type": "application/json"
+            }
+            
+            params = {
+                "max_results": min(count, 100),
+                "tweet.fields": "created_at,author_id,conversation_id,in_reply_to_user_id"
+            }
+            
+            if since_id:
+                params["since_id"] = since_id
+                logger.info(f"Using since_id: {since_id}")
+            
+            logger.info(f"Making direct HTTP request to: {url}")
+            logger.info(f"Request parameters: {params}")
+            
+            response = requests.get(url, headers=headers, params=params)
+            logger.info(f"HTTP Response status: {response.status_code}")
+            
+            # Log rate limit headers for debugging
+            rate_limit_headers = {}
+            for header_name in response.headers:
+                if 'rate' in header_name.lower() or 'limit' in header_name.lower():
+                    rate_limit_headers[header_name] = response.headers[header_name]
+            if rate_limit_headers:
+                logger.info(f"Rate limit headers: {rate_limit_headers}")
+            else:
+                logger.info("No rate limit headers found")
+            
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(f"Response data keys: {list(data.keys()) if data else 'None'}")
+                
+                mentions = []
+                if 'data' in data and data['data']:
+                    logger.info(f"Found {len(data['data'])} mentions via direct HTTP")
+                    
+                    for tweet_data in data['data']:
+                        mention_data = {
+                            'id': str(tweet_data['id']),
+                            'text': tweet_data['text'],
+                            'author_id': str(tweet_data['author_id']),
+                            'created_at': tweet_data['created_at'],
+                            'conversation_id': str(tweet_data.get('conversation_id', tweet_data['id'])),
+                            'in_reply_to_user_id': str(tweet_data['in_reply_to_user_id']) if tweet_data.get('in_reply_to_user_id') else None
+                        }
+                        mentions.append(mention_data)
+                        logger.info(f"Found mention: {tweet_data['text'][:50]}... from user {tweet_data['author_id']}")
+                    
+                    return mentions
+                else:
+                    logger.info("No mentions found in response data")
+                    return []
+            
+            elif response.status_code == 429:
+                logger.warning(f"Rate limit exceeded (429). Response: {response.text}")
+                return []
+            else:
+                logger.error(f"HTTP request failed with status {response.status_code}: {response.text}")
+                # Fallback to tweepy method
+                logger.info("Falling back to tweepy method...")
+                return self.get_mentions_tweepy(since_id=since_id, count=count)
+                
+        except Exception as e:
+            logger.error(f"Direct HTTP mentions request failed: {e}")
+            # Fallback to tweepy method
+            logger.info("Falling back to tweepy method...")
+            return self.get_mentions_tweepy(since_id=since_id, count=count)
     
     def reply_to_tweet(self, tweet_id: str, reply_text: str) -> Optional[str]:
         """Reply to a specific tweet"""

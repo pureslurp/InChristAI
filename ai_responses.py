@@ -95,6 +95,14 @@ Remember: You represent Christ's love in every interaction. Be authentic, caring
             # Build the prompt based on intent
             prompt = self._build_prompt(mention_text, intent, user_info, context)
             
+            # Log the complete prompt being sent to AI
+            logger.info("=" * 50)
+            logger.info("🤖 AI PROMPT DEBUG:")
+            logger.info("-" * 30)
+            logger.info("USER PROMPT:")
+            logger.info(prompt)
+            logger.info("=" * 50)
+            
             # Generate response using OpenAI (v0.28.1 format)
             response = self.client.ChatCompletion.create(
                 model=self.model,

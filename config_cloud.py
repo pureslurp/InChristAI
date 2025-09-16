@@ -23,6 +23,7 @@ BIBLE_API_URL = "https://api.scripture.api.bible/v1"
 
 # Bot Configuration
 BOT_USERNAME = os.getenv("BOT_USERNAME", "InChristAI")
+TWITTER_USER_ID = os.getenv("TWITTER_USER_ID", "1967203305995595776")
 POSTING_TIME = os.getenv("POSTING_TIME", "08:00")  # 24-hour format
 TIMEZONE = os.getenv("TIMEZONE", "America/New_York")
 
