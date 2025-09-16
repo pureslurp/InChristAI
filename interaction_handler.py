@@ -306,7 +306,7 @@ class InteractionHandler:
             logger.info(f"Searching Twitter for our replies: {search_query}")
             
             # Search for our replies to this tweet
-            search_results = self.twitter_api.search_tweets(search_query, count=5)
+            search_results = self.twitter_api.search_tweets(search_query, count=10)
             
             if search_results:
                 logger.info(f"Found {len(search_results)} existing replies from us to tweet {tweet_id}")
