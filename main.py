@@ -112,9 +112,11 @@ class InChristAI:
             schedule.every().day.at(posting_time).do(self._post_daily_verse)
             logger.info(f"Scheduled daily verse posting at {posting_time}")
             
-            # Schedule mention checking every 5 minutes
-            schedule.every(5).minutes.do(self._check_mentions)
-            logger.info("Scheduled mention checking every 5 minutes")
+            # Schedule mention checking 3 times per day (free tier: 100 API calls/month)
+            schedule.every().day.at("09:00").do(self._check_mentions)  # 9 AM
+            schedule.every().day.at("15:00").do(self._check_mentions)  # 3 PM  
+            schedule.every().day.at("21:00").do(self._check_mentions)  # 9 PM
+            logger.info("Scheduled mention checking 3 times daily (9 AM, 3 PM, 9 PM)")
             
             # Schedule daily cleanup at midnight
             schedule.every().day.at("00:00").do(self._daily_cleanup)

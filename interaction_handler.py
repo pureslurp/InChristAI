@@ -88,8 +88,8 @@ class InteractionHandler:
     def process_mentions(self) -> int:
         """Process new mentions and generate responses"""
         try:
-            # Get new mentions since last check
-            mentions = self.twitter_api.get_mentions(since_id=self.last_mention_id)
+            # Get new mentions since last check (limit to 10 to conserve API quota)
+            mentions = self.twitter_api.get_mentions(since_id=self.last_mention_id, count=10)
             
             if not mentions:
                 logger.info("No new mentions found")
