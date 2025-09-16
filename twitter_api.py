@@ -129,29 +129,52 @@ class TwitterAPI:
         try:
             mentions = []
             
-            # Use Twitter API v2 to get mentions
-            if since_id:
+            # Try v2 API first
+            try:
+                # Get the authenticated user's mentions using v2 API
                 tweets = self.client.get_mentions(
-                    since_id=since_id,
-                    max_results=count,
-                    tweet_fields=['created_at', 'author_id', 'conversation_id', 'in_reply_to_user_id']
+                    max_results=min(count, 100),  # API limit is 100
+                    tweet_fields=['created_at', 'author_id', 'conversation_id', 'in_reply_to_user_id'],
+                    since_id=since_id
                 )
-            else:
-                tweets = self.client.get_mentions(
-                    max_results=count,
-                    tweet_fields=['created_at', 'author_id', 'conversation_id', 'in_reply_to_user_id']
-                )
+                
+                if tweets.data:
+                    for tweet in tweets.data:
+                        mentions.append({
+                            'id': tweet.id,
+                            'text': tweet.text,
+                            'author_id': tweet.author_id,
+                            'created_at': tweet.created_at,
+                            'conversation_id': tweet.conversation_id,
+                            'in_reply_to_user_id': tweet.in_reply_to_user_id
+                        })
+                        
+                logger.info(f"Found {len(mentions)} mentions via v2 API")
+                return mentions
+                
+            except Exception as e:
+                logger.warning(f"v2 API mentions failed: {e}, trying v1.1...")
             
-            if tweets.data:
-                for tweet in tweets.data:
+            # Fallback to v1.1 API
+            if hasattr(self, 'api_v1'):
+                kwargs = {'count': count, 'include_entities': True}
+                if since_id:
+                    kwargs['since_id'] = since_id
+                    
+                tweets = self.api_v1.mentions_timeline(**kwargs)
+                
+                for tweet in tweets:
                     mentions.append({
-                        'id': tweet.id,
+                        'id': str(tweet.id),
                         'text': tweet.text,
-                        'author_id': tweet.author_id,
+                        'author_id': str(tweet.author.id),
                         'created_at': tweet.created_at,
-                        'conversation_id': tweet.conversation_id,
-                        'in_reply_to_user_id': tweet.in_reply_to_user_id
+                        'conversation_id': str(tweet.id),  # v1.1 doesn't have conversation_id
+                        'in_reply_to_user_id': str(tweet.in_reply_to_user_id) if tweet.in_reply_to_user_id else None
                     })
+                    
+                logger.info(f"Found {len(mentions)} mentions via v1.1 API")
+                return mentions
             
             logger.info(f"Retrieved {len(mentions)} mentions")
             return mentions
