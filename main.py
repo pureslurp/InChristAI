@@ -84,6 +84,21 @@ class InChristAI:
             
             # Schedule daily verse posting
             posting_time = config.POSTING_TIME
+            logger.info(f"DEBUG: Raw posting_time from config: '{posting_time}' (type: {type(posting_time)})")
+            
+            # Ensure proper time format
+            if isinstance(posting_time, str):
+                posting_time = posting_time.strip()
+                # If it's just HH:MM, that should work with schedule library
+                if len(posting_time) == 5 and ':' in posting_time:
+                    logger.info(f"DEBUG: Time format looks correct: {posting_time}")
+                else:
+                    logger.warning(f"DEBUG: Unexpected time format: {posting_time}, using default 08:00")
+                    posting_time = "08:00"
+            else:
+                logger.warning(f"DEBUG: posting_time is not a string: {posting_time}, using default 08:00")
+                posting_time = "08:00"
+            
             schedule.every().day.at(posting_time).do(self._post_daily_verse)
             logger.info(f"Scheduled daily verse posting at {posting_time}")
             
