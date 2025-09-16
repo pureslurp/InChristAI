@@ -336,7 +336,8 @@ class TwitterAPI:
                         logger.info(f"Successfully replied via v2 API to tweet {tweet_id}: {reply_id}")
                         return str(reply_id)
                 except Exception as e:
-                    logger.warning(f"v2 API reply failed: {e}, trying v1.1...")
+                    logger.warning(f"v2 API reply failed (likely access level issue): {e}")
+                    logger.info("Falling back to v1.1 API for reply...")
             
             # Fallback to v1.1 API
             if hasattr(self, 'api_v1'):
