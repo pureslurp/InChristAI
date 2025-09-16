@@ -16,10 +16,26 @@ logger = logging.getLogger(__name__)
 
 class AIResponseGenerator:
     def __init__(self):
-        self.client = openai.OpenAI(api_key=config.OPENAI_API_KEY)
-        self.model = config.AI_MODEL
-        self.temperature = config.AI_TEMPERATURE
-        self.max_response_length = config.MAX_RESPONSE_LENGTH
+        # Debug config loading
+        logger.info(f"Loading AI config - API key present: {bool(getattr(config, 'OPENAI_API_KEY', None))}")
+        logger.info(f"AI Model: {getattr(config, 'AI_MODEL', 'NOT_SET')}")
+        
+        # Validate API key
+        api_key = getattr(config, 'OPENAI_API_KEY', None)
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not found in configuration")
+        
+        # Initialize OpenAI client with error handling
+        try:
+            self.client = openai.OpenAI(api_key=api_key)
+            logger.info("OpenAI client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI client: {e}")
+            raise
+            
+        self.model = getattr(config, 'AI_MODEL', 'gpt-3.5-turbo')
+        self.temperature = getattr(config, 'AI_TEMPERATURE', 0.7)
+        self.max_response_length = getattr(config, 'MAX_RESPONSE_LENGTH', 180)
         self.bible_api = BibleAPI()
         
         # System prompt for the AI assistant

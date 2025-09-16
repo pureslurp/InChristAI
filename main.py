@@ -11,15 +11,22 @@ from datetime import datetime
 
 # Use cloud config if available, fallback to local config
 try:
-    if os.getenv('CLOUD_DEPLOYMENT') or os.getenv('PORT'):
+    cloud_deployment = os.getenv('CLOUD_DEPLOYMENT')
+    port_set = os.getenv('PORT')
+    print(f"DEBUG: CLOUD_DEPLOYMENT={cloud_deployment}, PORT={port_set}")
+    
+    if cloud_deployment or port_set:
         import config_cloud as config
+        print("DEBUG: Successfully imported config_cloud")
         logger_setup = logging.getLogger(__name__)
         logger_setup.info("Using cloud configuration")
     else:
         import config
+        print("DEBUG: Using local config (no cloud env vars)")
         logger_setup = logging.getLogger(__name__)
         logger_setup.info("Using local configuration")
-except ImportError:
+except ImportError as e:
+    print(f"DEBUG: ImportError when loading config: {e}")
     import config
     logger_setup = logging.getLogger(__name__)
     logger_setup.info("Using local configuration (cloud config not found)")
