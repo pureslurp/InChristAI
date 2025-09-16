@@ -86,14 +86,24 @@ class InChristAI:
             posting_time = config.POSTING_TIME
             logger.info(f"DEBUG: Raw posting_time from config: '{posting_time}' (type: {type(posting_time)})")
             
-            # Ensure proper time format
+            # Ensure proper time format (convert 8:00 to 08:00 format)
             if isinstance(posting_time, str):
                 posting_time = posting_time.strip()
-                # If it's just HH:MM, that should work with schedule library
-                if len(posting_time) == 5 and ':' in posting_time:
-                    logger.info(f"DEBUG: Time format looks correct: {posting_time}")
+                # Handle both H:MM and HH:MM formats
+                if ':' in posting_time:
+                    time_parts = posting_time.split(':')
+                    if len(time_parts) == 2:
+                        hour, minute = time_parts
+                        # Add leading zero to hour if needed
+                        hour = hour.zfill(2)
+                        minute = minute.zfill(2)
+                        posting_time = f"{hour}:{minute}"
+                        logger.info(f"DEBUG: Normalized time format: {posting_time}")
+                    else:
+                        logger.warning(f"DEBUG: Invalid time format: {posting_time}, using default 08:00")
+                        posting_time = "08:00"
                 else:
-                    logger.warning(f"DEBUG: Unexpected time format: {posting_time}, using default 08:00")
+                    logger.warning(f"DEBUG: No colon in time format: {posting_time}, using default 08:00")
                     posting_time = "08:00"
             else:
                 logger.warning(f"DEBUG: posting_time is not a string: {posting_time}, using default 08:00")
