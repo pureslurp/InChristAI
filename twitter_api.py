@@ -133,6 +133,7 @@ class TwitterAPI:
             try:
                 # Search for mentions of the bot using search_recent_tweets
                 query = f"@{self.bot_username}"
+                logger.info(f"Searching for mentions with query: '{query}'")
                 
                 kwargs = {
                     'query': query,
@@ -141,10 +142,13 @@ class TwitterAPI:
                 }
                 if since_id:
                     kwargs['since_id'] = since_id
+                    logger.info(f"Using since_id: {since_id}")
                     
+                logger.info(f"Search API call parameters: {kwargs}")
                 tweets = self.client.search_recent_tweets(**kwargs)
+                logger.info(f"Search API returned: {type(tweets)}, has data: {hasattr(tweets, 'data') if tweets else False}")
                 
-                if tweets.data:
+                if tweets and hasattr(tweets, 'data') and tweets.data:
                     for tweet in tweets.data:
                         mentions.append({
                             'id': tweet.id,
@@ -154,8 +158,10 @@ class TwitterAPI:
                             'conversation_id': tweet.conversation_id,
                             'in_reply_to_user_id': tweet.in_reply_to_user_id
                         })
-                        
-                logger.info(f"Found {len(mentions)} mentions via v2 search API")
+                    logger.info(f"Found {len(mentions)} mentions via v2 search API")
+                else:
+                    logger.info("No mentions found via v2 search API (empty result)")
+                    
                 return mentions
                 
             except Exception as e:
