@@ -129,14 +129,12 @@ class TwitterAPI:
         try:
             mentions = []
             
-            # Use search API to find mentions (works with free tier)
+            # Use mentions timeline API (confirmed available in free tier)
             try:
-                # Search for mentions of the bot using search_recent_tweets
-                query = f"@{self.bot_username} -is:retweet"  # Exclude retweets
-                logger.info(f"Searching for mentions with query: '{query}'")
+                # Get mentions using the proper mentions timeline endpoint
+                logger.info(f"Getting mentions timeline for @{self.bot_username}")
                 
                 kwargs = {
-                    'query': query,
                     'max_results': min(count, 100),
                     'tweet_fields': ['created_at', 'author_id', 'conversation_id', 'in_reply_to_user_id']
                 }
@@ -144,9 +142,9 @@ class TwitterAPI:
                     kwargs['since_id'] = since_id
                     logger.info(f"Using since_id: {since_id}")
                     
-                logger.info(f"Search API call parameters: {kwargs}")
-                tweets = self.client.search_recent_tweets(**kwargs)
-                logger.info(f"Search API returned: {type(tweets)}, has data: {hasattr(tweets, 'data') if tweets else False}")
+                logger.info(f"Mentions timeline API call parameters: {kwargs}")
+                tweets = self.client.get_mentions_timeline(**kwargs)
+                logger.info(f"Mentions timeline API returned: {type(tweets)}, has data: {hasattr(tweets, 'data') if tweets else False}")
                 
                 if tweets and hasattr(tweets, 'data') and tweets.data:
                     logger.info(f"Raw tweets.data: {tweets.data}")
@@ -161,7 +159,7 @@ class TwitterAPI:
                         }
                         mentions.append(mention_data)
                         logger.info(f"Found mention: {mention_data}")
-                    logger.info(f"Found {len(mentions)} mentions via v2 search API")
+                    logger.info(f"Found {len(mentions)} mentions via mentions timeline API")
                 else:
                     logger.info(f"No mentions found - tweets: {tweets}, has data attr: {hasattr(tweets, 'data') if tweets else False}")
                     if tweets and hasattr(tweets, 'data'):
@@ -170,7 +168,7 @@ class TwitterAPI:
                 return mentions
                 
             except Exception as e:
-                logger.warning(f"v2 search API failed: {e}, trying alternative search...")
+                logger.warning(f"Mentions timeline API failed: {e}, trying search fallback...")
                 
                 # Try alternative search without filters
                 try:
