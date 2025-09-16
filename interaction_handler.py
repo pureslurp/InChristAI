@@ -88,16 +88,35 @@ class InteractionHandler:
     def process_mentions(self) -> int:
         """Process new mentions and generate responses"""
         try:
-            # Get new mentions since last check (limit to 10 to conserve API quota)
-            mentions = self.twitter_api.get_mentions(since_id=self.last_mention_id, count=10)
+            # Get recent mentions from last 24 hours (without since_id to see all recent activity)
+            all_mentions = self.twitter_api.get_mentions(since_id=None, count=10)
             
-            if not mentions:
-                logger.info("No new mentions found")
+            if not all_mentions:
+                logger.info("No mentions found in recent history")
                 return 0
             
+            # Log all mentions found for visibility
+            logger.info(f"Found {len(all_mentions)} mentions in recent history:")
+            for i, mention in enumerate(all_mentions, 1):
+                status = "NEW" if not self.last_mention_id or mention['id'] > self.last_mention_id else "OLD"
+                logger.info(f"  {i}. [{status}] {mention['text'][:50]}... (ID: {mention['id']}, Author: {mention['author_id']})")
+            
+            # Filter to only new mentions for processing
+            new_mentions = []
+            if self.last_mention_id:
+                new_mentions = [m for m in all_mentions if m['id'] > self.last_mention_id]
+            else:
+                # If no last_mention_id, treat all as new
+                new_mentions = all_mentions
+            
+            if not new_mentions:
+                logger.info("No new mentions to process (all are already handled)")
+                return 0
+            
+            logger.info(f"Processing {len(new_mentions)} new mentions...")
             processed_count = 0
             
-            for mention in mentions:
+            for mention in new_mentions:
                 try:
                     # Update last mention ID
                     if not self.last_mention_id or mention['id'] > self.last_mention_id:
