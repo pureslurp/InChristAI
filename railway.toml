@@ -1,0 +1,22 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+numReplicas = 1
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+startCommand = "python main.py start"
+
+[env]
+PYTHONUNBUFFERED = "1"
+PYTHONDONTWRITEBYTECODE = "1"
+
+[[services]]
+name = "inchrist-ai"
+
+[services.source]
+repo = "your-username/InChristAI"
+rootDirectory = "/"
+restoreBuildCache = true
