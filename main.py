@@ -8,6 +8,7 @@ import sys
 import signal
 import os
 from datetime import datetime
+import pytz
 
 # Use cloud config if available, fallback to local config
 try:
@@ -109,8 +110,13 @@ class InChristAI:
                 logger.warning(f"DEBUG: posting_time is not a string: {posting_time}, using default 08:00")
                 posting_time = "08:00"
             
-            schedule.every().day.at(posting_time).do(self._post_daily_verse)
-            logger.info(f"Scheduled daily verse posting at {posting_time}")
+            # Get timezone for scheduling
+            bot_timezone = getattr(config, 'TIMEZONE', 'America/New_York')
+            logger.info(f"Using timezone: {bot_timezone}")
+            
+            # Create timezone-aware scheduler
+            self._setup_timezone_aware_schedule(posting_time, bot_timezone)
+            logger.info(f"Scheduled daily verse posting at {posting_time} {bot_timezone}")
             
             # Startup mentions check removed - will check on schedule only
             logger.info("Skipping startup mention check - will begin checking on schedule")
@@ -180,6 +186,46 @@ class InChristAI:
             logger.info(f"Bot Statistics: {stats}")
         except Exception as e:
             logger.error(f"Error logging stats: {e}")
+
+    def _setup_timezone_aware_schedule(self, posting_time: str, timezone_name: str):
+        """Set up timezone-aware daily posting schedule"""
+        try:
+            # Create timezone object
+            tz = pytz.timezone(timezone_name)
+            
+            # Get current time in the target timezone
+            now_tz = datetime.now(tz)
+            logger.info(f"Current time in {timezone_name}: {now_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            
+            # Parse posting time
+            hour, minute = map(int, posting_time.split(':'))
+            
+            # Create a wrapper function that handles timezone conversion
+            def timezone_aware_post():
+                # Get current time in target timezone
+                current_time_tz = datetime.now(tz)
+                logger.info(f"Daily post check: Current time in {timezone_name}: {current_time_tz.strftime('%H:%M:%S')}, Target: {posting_time}")
+                
+                # For schedule library, we need to let it handle the daily scheduling
+                # Just execute the post since schedule already determined it's time
+                self._post_daily_verse()
+            
+            # Convert target time to UTC for scheduling
+            # Create a sample date in the target timezone
+            sample_date = datetime.now(tz).replace(hour=hour, minute=minute, second=0, microsecond=0)
+            utc_time = sample_date.astimezone(pytz.UTC)
+            utc_posting_time = utc_time.strftime('%H:%M')
+            
+            logger.info(f"Converting {posting_time} {timezone_name} to {utc_posting_time} UTC for scheduling")
+            
+            # Schedule using UTC time (what the server runs on)
+            schedule.every().day.at(utc_posting_time).do(timezone_aware_post)
+            
+        except Exception as e:
+            logger.error(f"Error setting up timezone-aware schedule: {e}")
+            # Fallback to regular scheduling
+            logger.info("Falling back to regular scheduling (UTC)")
+            schedule.every().day.at(posting_time).do(self._post_daily_verse)
 
     def run_once(self, task: str = None, force=False):
         """Run a specific task once (for testing/manual execution)"""
