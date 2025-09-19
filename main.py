@@ -121,9 +121,9 @@ class InChristAI:
             # Startup mentions check removed - will check on schedule only
             logger.info("Skipping startup mention check - will begin checking on schedule")
             
-            # Schedule mention checking every 20 minutes (respects 15-min rate limit with buffer)
-            schedule.every(20).minutes.do(self._check_mentions)
-            logger.info("Scheduled mention checking every 20 minutes (within API rate limits)")
+            # Schedule mention checking every hour (conservative API usage)
+            schedule.every().hour.do(self._check_mentions)
+            logger.info("Scheduled mention checking every hour (conservative API usage)")
             
             # Schedule daily cleanup at midnight
             schedule.every().day.at("00:00").do(self._daily_cleanup)
