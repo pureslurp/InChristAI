@@ -8,6 +8,7 @@ import sys
 import signal
 import os
 from datetime import datetime
+from typing import Dict, List
 import pytz
 
 # Use cloud config if available, fallback to local config
@@ -36,6 +37,7 @@ from twitter_api import TwitterAPI
 from daily_poster import DailyPoster
 from interaction_handler import InteractionHandler
 from web_server import start_health_server
+from ai_responses import AIResponseGenerator
 
 # Configure logging
 logging.basicConfig(
@@ -54,6 +56,7 @@ class InChristAI:
         self.twitter_api = TwitterAPI(dry_run=dry_run)
         self.daily_poster = DailyPoster(dry_run=dry_run)
         self.interaction_handler = InteractionHandler(dry_run=dry_run)
+        self.ai_generator = AIResponseGenerator()
         self.running = False
         self.dry_run = dry_run
         self.web_server = None
@@ -125,6 +128,10 @@ class InChristAI:
             schedule.every().hour.do(self._check_mentions)
             logger.info("Scheduled mention checking every hour (conservative API usage)")
             
+            # Schedule prayer search and response every 4 hours
+            schedule.every(4).hours.do(self._search_and_respond_to_prayers)
+            logger.info("Scheduled prayer search and response every 4 hours")
+            
             # Schedule daily cleanup at midnight
             schedule.every().day.at("00:00").do(self._daily_cleanup)
             logger.info("Scheduled daily cleanup at midnight")
@@ -186,6 +193,130 @@ class InChristAI:
             logger.info(f"Bot Statistics: {stats}")
         except Exception as e:
             logger.error(f"Error logging stats: {e}")
+    
+    def _search_and_respond_to_prayers(self):
+        """Scheduled task to search for prayer requests and respond with encouragement"""
+        try:
+            logger.info("🙏 Starting prayer search and response cycle...")
+            
+            # Step 1: Search for prayer-related tweets (SINGLE Twitter API call)
+            # Use OR operator to search for multiple terms in one request
+            combined_query = "pray OR \"prayer request\" OR \"thoughts and prayers\""
+            logger.info(f"Making single Twitter API call with query: {combined_query}")
+            
+            tweets = self.twitter_api.search_tweets(combined_query, count=50)  # Increased count for better variety
+            
+            if not tweets:
+                logger.warning("No tweets found - likely rate limited or no matching content")
+                return False
+            
+            logger.info(f"✅ Found {len(tweets)} prayer-related tweets with 1 API call")
+            
+            # Step 2: Use AI to select best tweet and generate response
+            result = self.ai_generator.select_and_respond_to_tweet(tweets)
+            
+            if not result:
+                logger.info("AI found no suitable tweets for spiritual response")
+                return True  # Not an error, just no good candidates
+            
+            # Step 3: Log the analysis results
+            logger.info("🎯 AI Analysis Results:")
+            logger.info(f"Selected Tweet (FULL): {result.selected_tweet.text}")
+            logger.info(f"Author: {result.selected_tweet.author_id}")
+            logger.info(f"Tweet ID: {result.selected_tweet.id}")
+            logger.info(f"Detected Mood: {result.detected_mood}")
+            logger.info(f"Bible Verse: {result.bible_verse['reference']}")
+            logger.info(f"Response Length: {len(result.response_text)} chars")
+            
+            # Step 4: Check if we've already responded to this tweet (database only to avoid extra API calls)
+            if self._has_responded_to_tweet_db_only(result.selected_tweet.id):
+                logger.info("Already responded to this tweet, skipping...")
+                return True
+            
+            # Step 5: Post the response
+            if self.dry_run:
+                logger.info("🏃‍♂️ DRY RUN - Would post prayer response:")
+                logger.info(f"Tweet ID: {result.selected_tweet.id}")
+                logger.info(f"Response: {result.response_text}")
+            else:
+                logger.info("📤 Posting prayer response...")
+                reply_id = self.twitter_api.reply_to_tweet(
+                    result.selected_tweet.id,
+                    result.response_text
+                )
+                
+                if reply_id:
+                    logger.info(f"✅ Successfully posted prayer response: {reply_id}")
+                    
+                    # Record the interaction in database
+                    try:
+                        self.interaction_handler._record_interaction(
+                            result.selected_tweet.id,
+                            result.selected_tweet.author_id,
+                            result.selected_tweet.text,
+                            result.response_text,
+                            reply_id,
+                            'prayer_response'
+                        )
+                        logger.info("Interaction recorded in database")
+                    except Exception as e:
+                        logger.warning(f"Failed to record interaction: {e}")
+                        
+                else:
+                    logger.error("❌ Failed to post prayer response")
+                    return False
+            
+            logger.info("🙏 Prayer search and response cycle completed successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error in prayer search and response: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _has_responded_to_tweet_db_only(self, tweet_id: str) -> bool:
+        """Check if we've responded to a tweet using only database (no API calls)"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.interaction_handler.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT response_tweet_id FROM interactions WHERE tweet_id = ?', (tweet_id,))
+            result = cursor.fetchone()
+            
+            conn.close()
+            
+            if result is not None and result[0] is not None:
+                logger.info(f"Database shows we responded to {tweet_id}")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"Database check failed for tweet {tweet_id}: {e}")
+            return False  # Assume we haven't responded if database fails
+
+    def _check_mentions(self):
+        """Scheduled task to check and respond to mentions (database-only to preserve rate limits)"""
+        try:
+            logger.info("🔔 Checking mentions...")
+            # Temporarily patch the interaction handler to use database-only checks
+            # This preserves the search rate limit for prayer search functionality
+            original_method = self.interaction_handler._has_responded_to_tweet
+            self.interaction_handler._has_responded_to_tweet = lambda tweet_id: self._has_responded_to_tweet_db_only(tweet_id)
+            
+            try:
+                count = self.interaction_handler.process_mentions()
+                logger.info(f"✅ Processed {count} mentions (database-only checks)")
+                return count > 0
+            finally:
+                # Restore original method
+                self.interaction_handler._has_responded_to_tweet = original_method
+                
+        except Exception as e:
+            logger.error(f"Error checking mentions: {e}")
+            return False
 
     def _setup_timezone_aware_schedule(self, posting_time: str, timezone_name: str):
         """Set up timezone-aware daily posting schedule"""
@@ -254,6 +385,15 @@ class InChristAI:
                 self.interaction_handler.cleanup_old_data()
                 return True
             
+            elif task == "test_prayer_search":
+                logger.info("Prayer search tests have been moved to test_prayer_bot.py")
+                logger.info("Run: python test_prayer_bot.py workflow --help for options")
+                return True
+                
+            elif task == "prayer_search":
+                logger.info("Running prayer search and response...")
+                return self._search_and_respond_to_prayers()
+            
             else:
                 logger.error(f"Unknown task: {task}")
                 return False
@@ -282,6 +422,7 @@ class InChristAI:
             logger.error(f"Error getting status: {e}")
             return {'error': str(e)}
 
+
 def main():
     """Main entry point"""
     if len(sys.argv) > 1:
@@ -300,24 +441,27 @@ def main():
         if task == "help":
             print("""
 InChrist AI Bot Commands:
-  start          - Start the bot with scheduled tasks
-  post_verse     - Post today's verse once
-  check_mentions - Check and respond to mentions once
-  stats          - Show bot statistics
-  cleanup        - Run database cleanup
-  status         - Show bot status
-  help           - Show this help message
+  start              - Start the bot with scheduled tasks
+  post_verse         - Post today's verse once
+  check_mentions     - Check and respond to mentions once
+  prayer_search      - Search for prayer requests and respond once
+  stats              - Show bot statistics
+  cleanup            - Run database cleanup
+  status             - Show bot status
+  help               - Show this help message
   
 Flags:
   --dry-run, -d  - Run in dry run mode (no actual posting to Twitter)
   --force, -f    - Force posting even if already posted today
   
 Examples:
-  python main.py start --dry-run       # Start in dry run mode
-  python main.py post_verse -d         # Test posting without actually posting
-  python main.py post_verse --force    # Force post even if already posted today
-  python main.py post_verse -d -f      # Dry run force (test multiple times)
-  python main.py check_mentions --dry-run  # Test mention handling
+  python main.py start --dry-run               # Start in dry run mode
+  python main.py post_verse -d                 # Test posting without actually posting
+  python main.py post_verse --force            # Force post even if already posted today
+  python main.py post_verse -d -f              # Dry run force (test multiple times)
+  python main.py check_mentions --dry-run      # Test mention handling
+  python main.py prayer_search --dry-run       # Test prayer search and response
+  python test_prayer_bot.py workflow --help   # Advanced prayer search testing
             """)
             return
         
@@ -327,9 +471,9 @@ Examples:
                 logger.info("🏃‍♂️ Starting bot in DRY RUN mode - no actual posting!")
             bot.start()
             
-        elif task in ["post_verse", "check_mentions", "stats", "cleanup"]:
+        elif task in ["post_verse", "check_mentions", "stats", "cleanup", "test_prayer_search", "prayer_search"]:
             bot = InChristAI(dry_run=dry_run)
-            if dry_run and task in ["post_verse", "check_mentions"]:
+            if dry_run and task in ["post_verse", "check_mentions", "prayer_search"]:
                 logger.info(f"🏃‍♂️ Running '{task}' in DRY RUN mode - no actual posting!")
             if force and task == "post_verse":
                 logger.info("🔄 FORCE mode - will post even if already posted today!")

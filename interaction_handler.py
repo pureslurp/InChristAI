@@ -201,6 +201,13 @@ class InteractionHandler:
                 logger.error(f"Failed to generate response for mention {mention['id']}")
                 return False
             
+            # Check if AI decided not to reply
+            if response_text.strip().upper() == "NO_REPLY":
+                logger.info(f"AI decided not to reply to mention {mention['id']} (combative/inappropriate content)")
+                # Still record the interaction but mark as "no response needed"
+                self._update_interaction_response(mention['id'], "NO_REPLY", None)
+                return True  # This is successful - we appropriately chose not to respond
+            
             # Post reply
             reply_tweet_id = self.twitter_api.reply_to_tweet(mention['id'], response_text)
             

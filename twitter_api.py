@@ -376,31 +376,226 @@ class TwitterAPI:
             logger.error(f"Failed to get user info for {user_id}: {e}")
             return None
     
-    def search_tweets(self, query: str, count: int = 10) -> List[Dict]:
-        """Search for tweets containing specific keywords"""
+    def search_tweets(self, query: str, count: int = 10, include_thread_context: bool = False) -> List[Dict]:
+        """Search for tweets containing specific keywords using direct HTTP requests
+        
+        Args:
+            query: Search query string
+            count: Number of tweets to return (max 100)
+            include_thread_context: If True, fetch full thread context for replies
+        
+        Returns:
+            List of tweet dictionaries with optional thread context
+        """
         try:
-            tweets = self.client.search_recent_tweets(
-                query=query,
-                max_results=count,
-                tweet_fields=['created_at', 'author_id', 'public_metrics']
-            )
+            import requests
             
-            results = []
-            if tweets.data:
-                for tweet in tweets.data:
-                    results.append({
-                        'id': tweet.id,
-                        'text': tweet.text,
-                        'author_id': tweet.author_id,
-                        'created_at': tweet.created_at,
-                        'public_metrics': tweet.public_metrics
-                    })
+            # Ensure count is within Twitter API limits (10-100)
+            api_count = max(10, min(count, 100))
             
-            return results
+            # Direct HTTP request to X API v2 search endpoint
+            url = "https://api.x.com/2/tweets/search/recent"
+            
+            headers = {
+                "Authorization": f"Bearer {self.bearer_token}",
+                "Content-Type": "application/json"
+            }
+            
+            params = {
+                "query": query,
+                "max_results": api_count,
+                "tweet.fields": "created_at,author_id,public_metrics,conversation_id,in_reply_to_user_id"
+            }
+            
+            logger.info(f"Making direct HTTP search request to: {url}")
+            logger.info(f"Search query: '{query}', max_results: {api_count}")
+            
+            response = requests.get(url, headers=headers, params=params)
+            logger.info(f"HTTP Response status: {response.status_code}")
+            
+            # Log rate limit headers for debugging
+            rate_limit_headers = {}
+            for header_name in response.headers:
+                if 'rate' in header_name.lower() or 'limit' in header_name.lower():
+                    rate_limit_headers[header_name] = response.headers[header_name]
+            if rate_limit_headers:
+                logger.info(f"Rate limit headers: {rate_limit_headers}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(f"Response data keys: {list(data.keys()) if data else 'None'}")
+                
+                results = []
+                if 'data' in data and data['data']:
+                    logger.info(f"Found {len(data['data'])} tweets via direct HTTP search")
+                    
+                    for tweet_data in data['data']:
+                        tweet_result = {
+                            'id': str(tweet_data['id']),
+                            'text': tweet_data['text'],
+                            'author_id': str(tweet_data['author_id']),
+                            'created_at': tweet_data['created_at'],
+                            'public_metrics': tweet_data.get('public_metrics', {}),
+                            'conversation_id': str(tweet_data['conversation_id']),
+                            'in_reply_to_user_id': str(tweet_data['in_reply_to_user_id']) if tweet_data.get('in_reply_to_user_id') else None,
+                            'is_reply': str(tweet_data['id']) != str(tweet_data['conversation_id'])
+                        }
+                        
+                        # If this is a reply and we want thread context, fetch it
+                        if tweet_result['is_reply'] and include_thread_context:
+                            thread_context = self.get_thread_context(tweet_result['conversation_id'])
+                            tweet_result['thread_context'] = thread_context
+                        
+                        results.append(tweet_result)
+                        logger.info(f"Found tweet: {tweet_data['text'][:50]}... from user {tweet_data['author_id']}")
+                    
+                    return results
+                else:
+                    logger.info("No tweets found in search response")
+                    return []
+            
+            elif response.status_code == 429:
+                logger.warning(f"Rate limit exceeded (429). Response: {response.text}")
+                return []
+            else:
+                logger.error(f"HTTP search request failed with status {response.status_code}: {response.text}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Direct HTTP search request failed: {e}")
+            return []
+    
+    def get_thread_context(self, conversation_id: str) -> Dict:
+        """Get the entire thread/conversation for a given conversation ID
+        
+        Args:
+            conversation_id: The ID of the original tweet in the conversation
+            
+        Returns:
+            Dictionary containing the original tweet and all replies in chronological order
+        """
+        try:
+            thread_context = {
+                'original_tweet': None,
+                'replies': [],
+                'total_tweets': 0
+            }
+            
+            # First, get the original tweet
+            original_tweet = self.get_original_tweet(conversation_id)
+            if original_tweet:
+                thread_context['original_tweet'] = original_tweet
+                thread_context['total_tweets'] += 1
+            
+            # Then search for all replies in this conversation
+            # Use search to find replies to this conversation
+            search_query = f"conversation_id:{conversation_id}"
+            logger.info(f"Getting thread context with query: {search_query}")
+            
+            try:
+                # Use direct HTTP request for searching conversation tweets
+                import requests
+                
+                url = "https://api.x.com/2/tweets/search/recent"
+                headers = {
+                    "Authorization": f"Bearer {self.bearer_token}",
+                    "Content-Type": "application/json"
+                }
+                params = {
+                    "query": search_query,
+                    "max_results": 100,  # Get up to 100 tweets in the thread
+                    "tweet.fields": "created_at,author_id,conversation_id,in_reply_to_user_id"
+                }
+                
+                logger.info(f"Making direct HTTP request for conversation search: {url}")
+                response = requests.get(url, headers=headers, params=params)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'data' in data and data['data']:
+                        for tweet_data in data['data']:
+                            # Skip the original tweet (we already have it)
+                            if str(tweet_data['id']) != str(conversation_id):
+                                reply_data = {
+                                    'id': str(tweet_data['id']),
+                                    'text': tweet_data['text'],
+                                    'author_id': str(tweet_data['author_id']),
+                                    'created_at': tweet_data['created_at'],
+                                    'in_reply_to_user_id': str(tweet_data['in_reply_to_user_id']) if tweet_data.get('in_reply_to_user_id') else None
+                                }
+                                thread_context['replies'].append(reply_data)
+                                thread_context['total_tweets'] += 1
+                        
+                        # Sort replies by creation time (chronological order)
+                        thread_context['replies'].sort(key=lambda x: x['created_at'])
+                        
+                    logger.info(f"Found thread with {thread_context['total_tweets']} total tweets")
+                elif response.status_code == 429:
+                    logger.warning(f"Rate limit hit during thread search: {response.text}")
+                else:
+                    logger.warning(f"Thread search failed with status {response.status_code}: {response.text}")
+                
+            except Exception as search_e:
+                logger.warning(f"Search for conversation failed: {search_e}, trying alternative method...")
+                # If search fails, we still have the original tweet
+                pass
+                
+            return thread_context
             
         except Exception as e:
-            logger.error(f"Failed to search tweets: {e}")
-            return []
+            logger.error(f"Failed to get thread context for conversation {conversation_id}: {e}")
+            return {'original_tweet': None, 'replies': [], 'total_tweets': 0}
+    
+    def get_original_tweet(self, conversation_id: str) -> Optional[Dict]:
+        """Get just the original tweet from a conversation using direct HTTP requests
+        
+        Args:
+            conversation_id: The ID of the original tweet
+            
+        Returns:
+            Dictionary containing the original tweet data, or None if not found
+        """
+        try:
+            import requests
+            
+            # Direct HTTP request to X API v2 get tweet endpoint
+            url = f"https://api.x.com/2/tweets/{conversation_id}"
+            
+            headers = {
+                "Authorization": f"Bearer {self.bearer_token}",
+                "Content-Type": "application/json"
+            }
+            
+            params = {
+                "tweet.fields": "created_at,author_id,public_metrics,conversation_id"
+            }
+            
+            logger.info(f"Making direct HTTP request to get original tweet: {url}")
+            response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'data' in data:
+                    tweet_data = data['data']
+                    return {
+                        'id': str(tweet_data['id']),
+                        'text': tweet_data['text'],
+                        'author_id': str(tweet_data['author_id']),
+                        'created_at': tweet_data['created_at'],
+                        'public_metrics': tweet_data.get('public_metrics', {}),
+                        'conversation_id': str(tweet_data['conversation_id'])
+                    }
+            
+            elif response.status_code == 429:
+                logger.warning(f"Rate limit exceeded getting original tweet {conversation_id}")
+            else:
+                logger.error(f"Failed to get original tweet {conversation_id}: status {response.status_code}, {response.text}")
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get original tweet {conversation_id}: {e}")
+            return None
     
     def like_tweet(self, tweet_id: str) -> bool:
         """Like a tweet"""

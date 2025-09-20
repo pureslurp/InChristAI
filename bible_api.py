@@ -218,15 +218,21 @@ class BibleAPI:
             '1PE.2.1'      # "Therefore, rid yourselves of all malice and all deceit, hypocrisy, envy, and slander of every kind"
         ]
 
+    def get_available_moods(self) -> List[str]:
+        """Get list of all available mood categories"""
+        return [
+            'afraid', 'anxious', 'lonely', 'sad', 'angry', 'confused',
+            'discouraged', 'guilty', 'stressed', 'hopeless', 'grateful', 'jealous'
+        ]
+
     def get_verse_by_mood(self, mood: str, version: str = 'ESV') -> Optional[Dict]:
         """Get a random verse reference for a specific mood"""
-        # Use getattr to dynamically access the mood attribute, default to 'afraid' if mood doesn't exist
-        mood_verses = getattr(self, mood, self.afraid)
+        # Use getattr to dynamically access the mood attribute, default to 'sad' if mood doesn't exist
+        mood_verses = getattr(self, mood, self.sad)
         verse_reference = random.choice(mood_verses)
         
         # Get the full verse data using the reference
         return self.get_verse_by_reference(verse_reference, version)
-
     def get_random_verse(self, version: str = 'ESV') -> Optional[Dict]:
         """Get a random inspirational verse"""
         try:
