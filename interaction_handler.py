@@ -190,11 +190,14 @@ class InteractionHandler:
             # Store interaction in database
             self._store_interaction(mention, user_info)
             
+            # Get original tweet context if this mention is a reply
+            context = self._get_mention_context(mention)
+            
             # Generate AI response (no username needed - Twitter handles reply tagging automatically)
             response_text = self.ai_generator.generate_response(
                 mention_text=mention['text'],
                 user_info=user_info,
-                context=f"Someone on Twitter is asking for spiritual guidance"
+                context=context
             )
             
             if not response_text:
@@ -223,6 +226,57 @@ class InteractionHandler:
         except Exception as e:
             logger.error(f"Error processing single mention: {e}")
             return False
+
+    def _get_mention_context(self, mention: Dict) -> str:
+        """Get context for a mention, including original tweet if it's a reply"""
+        try:
+            base_context = "Someone on Twitter is asking for spiritual guidance"
+            
+            # Check if this mention has original tweet data (already fetched in the same API call)
+            original_tweet = mention.get('original_tweet')
+            if original_tweet:
+                original_text = original_tweet.get('text', '')
+                if original_text:
+                    # Limit original tweet text to avoid making the context too long
+                    max_context_length = 200
+                    if len(original_text) > max_context_length:
+                        original_text = original_text[:max_context_length] + "..."
+                    
+                    context_with_original = f"{base_context}. They are replying to this original tweet: \"{original_text}\""
+                    logger.info(f"Added original tweet context from mention data: {original_text[:50]}...")
+                    return context_with_original
+                else:
+                    logger.warning(f"Original tweet found but has no text")
+            else:
+                # Check if this is a reply but we didn't get the original tweet in the API response
+                conversation_id = mention.get('conversation_id')
+                mention_id = mention.get('id')
+                
+                if conversation_id and mention_id and str(conversation_id) != str(mention_id):
+                    logger.info(f"Mention {mention_id} is a reply but original tweet not in API response")
+                    # Fall back to separate API call only if absolutely necessary
+                    try:
+                        fetched_original_tweet = self.twitter_api.get_original_tweet(conversation_id)
+                        if fetched_original_tweet:
+                            original_text = fetched_original_tweet.get('text', '')
+                            if original_text:
+                                max_context_length = 200
+                                if len(original_text) > max_context_length:
+                                    original_text = original_text[:max_context_length] + "..."
+                                
+                                context_with_original = f"{base_context}. They are replying to this original tweet: \"{original_text}\""
+                                logger.warning(f"Had to make separate API call for original tweet context: {original_text[:50]}...")
+                                return context_with_original
+                    except Exception as e:
+                        logger.warning(f"Failed fallback API call for original tweet {conversation_id}: {e}")
+                else:
+                    logger.info(f"Mention {mention_id} is not a reply")
+            
+            return base_context
+            
+        except Exception as e:
+            logger.error(f"Error getting mention context: {e}")
+            return "Someone on Twitter is asking for spiritual guidance"
 
     def _store_interaction(self, mention: Dict, user_info: Dict = None):
         """Store interaction in database"""

@@ -165,6 +165,10 @@ Remember: You represent Christ's love in every interaction. Be authentic, caring
         
         if context:
             base_prompt += f"\nContext: {context}"
+            
+            # If the context includes an original tweet, emphasize its importance
+            if "They are replying to this original tweet:" in context:
+                base_prompt += "\n\nIMPORTANT: The person is responding to a specific tweet. Use the original tweet content to understand what they're referring to when they say 'this' or similar references. Tailor your response to address their feelings about the original tweet's content."
         
         # Add intent-specific instructions
         if intent == 'prayer_request':

@@ -143,7 +143,8 @@ class TwitterAPI:
                             'author_id': str(tweet.author.id),
                             'created_at': tweet.created_at,
                             'conversation_id': str(tweet.id),  # v1.1 doesn't have conversation_id
-                            'in_reply_to_user_id': str(tweet.in_reply_to_user_id) if tweet.in_reply_to_user_id else None
+                            'in_reply_to_user_id': str(tweet.in_reply_to_user_id) if tweet.in_reply_to_user_id else None,
+                            'original_tweet': None  # v1.1 API doesn't support expansions, will require separate call if needed
                         }
                         mentions.append(mention_data)
                         logger.info(f"Found mention: {tweet.full_text[:50] if hasattr(tweet, 'full_text') else tweet.text[:50]}... from @{tweet.author.screen_name}")
@@ -183,7 +184,8 @@ class TwitterAPI:
                                     'author_id': tweet.author_id,
                                     'created_at': tweet.created_at,
                                     'conversation_id': tweet.conversation_id,
-                                    'in_reply_to_user_id': tweet.in_reply_to_user_id
+                                    'in_reply_to_user_id': tweet.in_reply_to_user_id,
+                                    'original_tweet': None  # Search fallback doesn't support expansions
                                 }
                                 mentions.append(mention_data)
                                 logger.info(f"Found mention via alternative search: {mention_data}")
@@ -210,7 +212,8 @@ class TwitterAPI:
                         'author_id': str(tweet.author.id),
                         'created_at': tweet.created_at,
                         'conversation_id': str(tweet.id),  # v1.1 doesn't have conversation_id
-                        'in_reply_to_user_id': str(tweet.in_reply_to_user_id) if tweet.in_reply_to_user_id else None
+                        'in_reply_to_user_id': str(tweet.in_reply_to_user_id) if tweet.in_reply_to_user_id else None,
+                        'original_tweet': None  # v1.1 fallback doesn't support expansions
                     })
                     
                 logger.info(f"Found {len(mentions)} mentions via v1.1 API")
@@ -241,7 +244,8 @@ class TwitterAPI:
             
             params = {
                 "max_results": min(count, 100),
-                "tweet.fields": "created_at,author_id,conversation_id,in_reply_to_user_id"
+                "tweet.fields": "created_at,author_id,conversation_id,in_reply_to_user_id,referenced_tweets",
+                "expansions": "referenced_tweets.id"
             }
             
             if since_id:
@@ -268,6 +272,18 @@ class TwitterAPI:
                 data = response.json()
                 logger.info(f"Response data keys: {list(data.keys()) if data else 'None'}")
                 
+                # Build a lookup map for referenced tweets (original tweets)
+                referenced_tweets_map = {}
+                if 'includes' in data and 'tweets' in data['includes']:
+                    for ref_tweet in data['includes']['tweets']:
+                        referenced_tweets_map[str(ref_tweet['id'])] = {
+                            'id': str(ref_tweet['id']),
+                            'text': ref_tweet['text'],
+                            'author_id': str(ref_tweet['author_id']),
+                            'created_at': ref_tweet['created_at']
+                        }
+                    logger.info(f"Found {len(referenced_tweets_map)} referenced tweets in includes")
+                
                 mentions = []
                 if 'data' in data and data['data']:
                     logger.info(f"Found {len(data['data'])} mentions via direct HTTP")
@@ -279,8 +295,20 @@ class TwitterAPI:
                             'author_id': str(tweet_data['author_id']),
                             'created_at': tweet_data['created_at'],
                             'conversation_id': str(tweet_data.get('conversation_id', tweet_data['id'])),
-                            'in_reply_to_user_id': str(tweet_data['in_reply_to_user_id']) if tweet_data.get('in_reply_to_user_id') else None
+                            'in_reply_to_user_id': str(tweet_data['in_reply_to_user_id']) if tweet_data.get('in_reply_to_user_id') else None,
+                            'original_tweet': None  # Will be populated if this is a reply
                         }
+                        
+                        # If this tweet has referenced tweets (i.e., it's a reply), add the original tweet
+                        if 'referenced_tweets' in tweet_data:
+                            for ref_tweet in tweet_data['referenced_tweets']:
+                                if ref_tweet['type'] == 'replied_to':
+                                    ref_tweet_id = str(ref_tweet['id'])
+                                    if ref_tweet_id in referenced_tweets_map:
+                                        mention_data['original_tweet'] = referenced_tweets_map[ref_tweet_id]
+                                        logger.info(f"Mention {mention_data['id']} has original tweet context: {mention_data['original_tweet']['text'][:50]}...")
+                                        break
+                        
                         mentions.append(mention_data)
                         logger.info(f"Found mention: {tweet_data['text'][:50]}... from user {tweet_data['author_id']}")
                     
