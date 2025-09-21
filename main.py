@@ -128,9 +128,9 @@ class InChristAI:
             schedule.every().hour.do(self._check_mentions)
             logger.info("Scheduled mention checking every hour (conservative API usage)")
             
-            # Schedule prayer search and response every 4 hours
-            schedule.every(4).hours.do(self._search_and_respond_to_prayers)
-            logger.info("Scheduled prayer search and response every 4 hours")
+            # Schedule prayer search and response every 4 hours (dry-run mode)
+            schedule.every(4).hours.do(lambda: self._search_and_respond_to_prayers(dry_run=True))
+            logger.info("Scheduled prayer search and response every 4 hours (dry-run mode)")
             
             # Schedule daily cleanup at midnight
             schedule.every().day.at("00:00").do(self._daily_cleanup)
@@ -194,7 +194,7 @@ class InChristAI:
         except Exception as e:
             logger.error(f"Error logging stats: {e}")
     
-    def _search_and_respond_to_prayers(self):
+    def _search_and_respond_to_prayers(self, dry_run=False):
         """Scheduled task to search for prayer requests and respond with encouragement"""
         try:
             logger.info("🙏 Starting prayer search and response cycle...")
@@ -234,7 +234,7 @@ class InChristAI:
                 return True
             
             # Step 5: Post the response
-            if self.dry_run:
+            if dry_run:
                 logger.info("🏃‍♂️ DRY RUN - Would post prayer response:")
                 logger.info(f"Tweet ID: {result.selected_tweet.id}")
                 logger.info(f"Response: {result.response_text}")
@@ -278,16 +278,13 @@ class InChristAI:
     def _has_responded_to_tweet_db_only(self, tweet_id: str) -> bool:
         """Check if we've responded to a tweet using only database (no API calls)"""
         try:
-            import sqlite3
-            conn = sqlite3.connect(self.interaction_handler.db_path)
-            cursor = conn.cursor()
+            results = self.interaction_handler.db.execute_query(
+                'SELECT response_tweet_id FROM interactions WHERE tweet_id = %s' if self.interaction_handler.db.is_postgres else 
+                'SELECT response_tweet_id FROM interactions WHERE tweet_id = ?', 
+                (tweet_id,)
+            )
             
-            cursor.execute('SELECT response_tweet_id FROM interactions WHERE tweet_id = ?', (tweet_id,))
-            result = cursor.fetchone()
-            
-            conn.close()
-            
-            if result is not None and result[0] is not None:
+            if results and results[0]['response_tweet_id'] is not None:
                 logger.info(f"Database shows we responded to {tweet_id}")
                 return True
             

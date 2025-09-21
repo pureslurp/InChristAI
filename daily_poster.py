@@ -2,7 +2,6 @@
 Daily Bible verse posting functionality
 """
 import logging
-import sqlite3
 from datetime import datetime, date
 from typing import Dict, Optional
 import random
@@ -10,6 +9,7 @@ import random
 from twitter_api import TwitterAPI
 from bible_api import BibleAPI, get_fallback_verse
 from ai_responses import AIResponseGenerator
+from database import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class DailyPoster:
         self.twitter_api = TwitterAPI(dry_run=dry_run)
         self.bible_api = BibleAPI()
         self.ai_generator = AIResponseGenerator()
-        self.db_path = "inchrist_ai.db"
+        self.db = DatabaseManager()
         self.dry_run = dry_run
         
         # Posting approach: verse first, then reply with reflection
@@ -280,14 +280,12 @@ class DailyPoster:
     def _has_posted_today(self, today: date) -> bool:
         """Check if we've already posted today"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT id FROM daily_posts WHERE date = ?', (today,))
-            result = cursor.fetchone()
-            
-            conn.close()
-            return result is not None
+            results = self.db.execute_query(
+                'SELECT id FROM daily_posts WHERE date = %s' if self.db.is_postgres else 
+                'SELECT id FROM daily_posts WHERE date = ?', 
+                (today,)
+            )
+            return len(results) > 0
             
         except Exception as e:
             logger.error(f"Error checking if posted today: {e}")
@@ -296,46 +294,40 @@ class DailyPoster:
     def _record_daily_post(self, today: date, verse_data: Dict, tweet_id: str, force=False, reply_id=None):
         """Record today's post in the database"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # First, ensure the table has a reply_tweet_id column
-            cursor.execute("PRAGMA table_info(daily_posts)")
-            columns = [column[1] for column in cursor.fetchall()]
-            if 'reply_tweet_id' not in columns:
-                cursor.execute('ALTER TABLE daily_posts ADD COLUMN reply_tweet_id TEXT')
-            
             if force:
                 # In force mode, update existing record or insert new one
-                cursor.execute('''
-                    INSERT OR REPLACE INTO daily_posts 
-                    (date, verse_reference, verse_text, tweet_id, reply_tweet_id, posted_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (
-                    today,
-                    verse_data['reference'],
-                    verse_data['text'],
-                    tweet_id,
-                    reply_id,
-                    datetime.now()
-                ))
+                if self.db.is_postgres:
+                    self.db.execute_update('''
+                        INSERT INTO daily_posts 
+                        (date, verse_reference, verse_text, tweet_id, reply_tweet_id, posted_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (date) DO UPDATE SET
+                            verse_reference = EXCLUDED.verse_reference,
+                            verse_text = EXCLUDED.verse_text,
+                            tweet_id = EXCLUDED.tweet_id,
+                            reply_tweet_id = EXCLUDED.reply_tweet_id,
+                            posted_at = EXCLUDED.posted_at
+                    ''', (today, verse_data['reference'], verse_data['text'], tweet_id, reply_id, datetime.now()))
+                else:
+                    self.db.execute_update('''
+                        INSERT OR REPLACE INTO daily_posts 
+                        (date, verse_reference, verse_text, tweet_id, reply_tweet_id, posted_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (today, verse_data['reference'], verse_data['text'], tweet_id, reply_id, datetime.now()))
             else:
                 # Normal mode, only insert if not exists
-                cursor.execute('''
-                    INSERT INTO daily_posts 
-                    (date, verse_reference, verse_text, tweet_id, reply_tweet_id, posted_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (
-                    today,
-                    verse_data['reference'],
-                    verse_data['text'],
-                    tweet_id,
-                    reply_id,
-                    datetime.now()
-                ))
-            
-            conn.commit()
-            conn.close()
+                if self.db.is_postgres:
+                    self.db.execute_update('''
+                        INSERT INTO daily_posts 
+                        (date, verse_reference, verse_text, tweet_id, reply_tweet_id, posted_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    ''', (today, verse_data['reference'], verse_data['text'], tweet_id, reply_id, datetime.now()))
+                else:
+                    self.db.execute_update('''
+                        INSERT INTO daily_posts 
+                        (date, verse_reference, verse_text, tweet_id, reply_tweet_id, posted_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (today, verse_data['reference'], verse_data['text'], tweet_id, reply_id, datetime.now()))
             
         except Exception as e:
             logger.error(f"Error recording daily post: {e}")
@@ -343,25 +335,24 @@ class DailyPoster:
     def get_posting_history(self, days: int = 7) -> list:
         """Get recent posting history"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
+            results = self.db.execute_query('''
+                SELECT date, verse_reference, tweet_id, posted_at
+                FROM daily_posts 
+                ORDER BY date DESC 
+                LIMIT %s
+            ''' if self.db.is_postgres else '''
                 SELECT date, verse_reference, tweet_id, posted_at
                 FROM daily_posts 
                 ORDER BY date DESC 
                 LIMIT ?
             ''', (days,))
             
-            results = cursor.fetchall()
-            conn.close()
-            
             return [
                 {
-                    'date': row[0],
-                    'verse_reference': row[1],
-                    'tweet_id': row[2],
-                    'posted_at': row[3]
+                    'date': row['date'],
+                    'verse_reference': row['verse_reference'],
+                    'tweet_id': row['tweet_id'],
+                    'posted_at': row['posted_at']
                 }
                 for row in results
             ]
