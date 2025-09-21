@@ -1,7 +1,6 @@
 """
 AI-powered response generation for Twitter interactions
 """
-import openai
 import logging
 from typing import Dict, List, Optional
 import re
@@ -35,7 +34,7 @@ class AIResponseGenerator:
             logger.error(f"Failed to initialize OpenAI client: {e}")
             raise
             
-        self.model = getattr(config, 'AI_MODEL', 'gpt-3.5-turbo')
+        self.model = getattr(config, 'AI_MODEL', 'gpt-4o-mini')
         self.temperature = getattr(config, 'AI_TEMPERATURE', 0.7)
         self.max_response_length = getattr(config, 'MAX_RESPONSE_LENGTH', 180)
         self.bible_api = BibleAPI()
