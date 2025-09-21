@@ -227,7 +227,11 @@ class TwitterAPI:
             return []
     
     def get_mentions(self, since_id: Optional[str] = None, count: int = 20) -> List[Dict]:
-        """Get recent mentions using direct HTTP requests (bypasses tweepy limitations)"""
+        """Get recent mentions using direct HTTP requests
+        
+        WARNING: X API Free tier allows only 100 API calls per MONTH
+        Use this method sparingly - recommended: once per day maximum
+        """
         try:
             import requests
             
@@ -258,15 +262,23 @@ class TwitterAPI:
             response = requests.get(url, headers=headers, params=params)
             logger.info(f"HTTP Response status: {response.status_code}")
             
-            # Log rate limit headers for debugging
+            # Log rate limit headers for debugging and monitoring
             rate_limit_headers = {}
             for header_name in response.headers:
                 if 'rate' in header_name.lower() or 'limit' in header_name.lower():
                     rate_limit_headers[header_name] = response.headers[header_name]
+            
             if rate_limit_headers:
-                logger.info(f"Rate limit headers: {rate_limit_headers}")
+                logger.info(f"🔢 API USAGE - Rate limit headers: {rate_limit_headers}")
+                # Extract key info for monitoring
+                remaining = rate_limit_headers.get('x-rate-limit-remaining', 'unknown')
+                reset_time = rate_limit_headers.get('x-rate-limit-reset', 'unknown')
+                logger.warning(f"📊 API BUDGET: {remaining} calls remaining until reset at {reset_time}")
             else:
                 logger.info("No rate limit headers found")
+            
+            # Log every API call for budget tracking
+            logger.warning(f"💰 API CALL MADE: get_mentions() - Monitor your monthly budget (100 calls/month limit)")
             
             if response.status_code == 200:
                 data = response.json()
@@ -407,6 +419,9 @@ class TwitterAPI:
     def search_tweets(self, query: str, count: int = 10, include_thread_context: bool = False) -> List[Dict]:
         """Search for tweets containing specific keywords using direct HTTP requests
         
+        WARNING: X API Free tier allows only 100 API calls per MONTH
+        Use this method very sparingly - recommended: few times per week maximum
+        
         Args:
             query: Search query string
             count: Number of tweets to return (max 100)
@@ -441,13 +456,21 @@ class TwitterAPI:
             response = requests.get(url, headers=headers, params=params)
             logger.info(f"HTTP Response status: {response.status_code}")
             
-            # Log rate limit headers for debugging
+            # Log rate limit headers for debugging and monitoring
             rate_limit_headers = {}
             for header_name in response.headers:
                 if 'rate' in header_name.lower() or 'limit' in header_name.lower():
                     rate_limit_headers[header_name] = response.headers[header_name]
+            
             if rate_limit_headers:
-                logger.info(f"Rate limit headers: {rate_limit_headers}")
+                logger.info(f"🔢 API USAGE - Rate limit headers: {rate_limit_headers}")
+                # Extract key info for monitoring
+                remaining = rate_limit_headers.get('x-rate-limit-remaining', 'unknown')
+                reset_time = rate_limit_headers.get('x-rate-limit-reset', 'unknown')
+                logger.warning(f"📊 API BUDGET: {remaining} calls remaining until reset at {reset_time}")
+            
+            # Log every API call for budget tracking
+            logger.warning(f"💰 API CALL MADE: search_tweets('{query}') - Monitor your monthly budget (100 calls/month limit)")
             
             if response.status_code == 200:
                 data = response.json()

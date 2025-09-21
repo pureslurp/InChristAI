@@ -124,13 +124,15 @@ class InChristAI:
             # Startup mentions check removed - will check on schedule only
             logger.info("Skipping startup mention check - will begin checking on schedule")
             
-            # Schedule mention checking every hour (conservative API usage)
-            schedule.every().hour.do(self._check_mentions)
-            logger.info("Scheduled mention checking every hour (conservative API usage)")
+            # Schedule mention checking once per day (X API Free tier: 100 calls/month limit)
+            # This uses ~30 calls/month for mentions (expansions parameter gets original tweet context)
+            schedule.every().day.at("09:00").do(self._check_mentions)
+            logger.info("Scheduled mention checking once daily at 9:00 AM (X API Free tier: 100 calls/month)")
             
-            # Schedule prayer search and response every 4 hours (dry-run mode)
-            schedule.every(4).hours.do(lambda: self._search_and_respond_to_prayers(dry_run=True))
-            logger.info("Scheduled prayer search and response every 4 hours (dry-run mode)")
+            # Schedule prayer search once daily (X API Free tier: 100 calls/month limit)
+            # This uses ~30 calls/month, combined with mentions = ~60 calls/month total (40 calls buffer)
+            schedule.every().day.at("10:00").do(lambda: self._search_and_respond_to_prayers(dry_run=True))
+            logger.info("Scheduled prayer search once daily at 10:00 AM (X API Free tier: 100 calls/month)")
             
             # Schedule daily cleanup at midnight
             schedule.every().day.at("00:00").do(self._daily_cleanup)

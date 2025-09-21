@@ -35,8 +35,9 @@ class InteractionHandler:
     def process_mentions(self) -> int:
         """Process new mentions and generate responses"""
         try:
-            # Get recent mentions from last 24 hours (without since_id to see all recent activity)
-            all_mentions = self.twitter_api.get_mentions(since_id=None, count=10)
+            # Get recent mentions - maximize data retrieval for our precious daily API call
+            # Use max count and get all mentions since last check (X API Free tier: 100 calls/month)
+            all_mentions = self.twitter_api.get_mentions(since_id=None, count=25)
             
             if not all_mentions:
                 logger.info("No mentions found in recent history")
@@ -199,23 +200,11 @@ class InteractionHandler:
                 conversation_id = mention.get('conversation_id')
                 mention_id = mention.get('id')
                 
+                # Log reply status - no additional API calls needed
+                # The expansions parameter in get_mentions should handle most original tweet context
                 if conversation_id and mention_id and str(conversation_id) != str(mention_id):
-                    logger.info(f"Mention {mention_id} is a reply but original tweet not in API response")
-                    # Fall back to separate API call only if absolutely necessary
-                    try:
-                        fetched_original_tweet = self.twitter_api.get_original_tweet(conversation_id)
-                        if fetched_original_tweet:
-                            original_text = fetched_original_tweet.get('text', '')
-                            if original_text:
-                                max_context_length = 200
-                                if len(original_text) > max_context_length:
-                                    original_text = original_text[:max_context_length] + "..."
-                                
-                                context_with_original = f"{base_context}. They are replying to this original tweet: \"{original_text}\""
-                                logger.warning(f"Had to make separate API call for original tweet context: {original_text[:50]}...")
-                                return context_with_original
-                    except Exception as e:
-                        logger.warning(f"Failed fallback API call for original tweet {conversation_id}: {e}")
+                    logger.info(f"Mention {mention_id} is a reply but original tweet context not available in API response")
+                    logger.info(f"Bot will respond with general context (expansions parameter should handle most cases)")
                 else:
                     logger.info(f"Mention {mention_id} is not a reply")
             
