@@ -62,17 +62,38 @@ class DailyPoster:
             return False
 
     def _get_todays_verse(self) -> Optional[Dict]:
-        """Get a verse for today's post"""
+        """Get a verse for today's post, avoiding recently used verses"""
         try:
-            # Try to get verse from API
-            verse_data = self.bible_api.get_daily_verse()
+            # Get recently used verses (last 14 days)
+            recently_used_verses = self._get_recently_used_verses(days=14)
+            logger.info(f"Found {len(recently_used_verses)} verses used in the last 14 days")
             
-            if verse_data:
-                return verse_data
+            # Try to get verse from API, checking for duplicates
+            max_attempts = 5  # Limit attempts to avoid infinite loops
+            for attempt in range(max_attempts):
+                verse_data = self.bible_api.get_daily_verse()
+                
+                if verse_data:
+                    # Check if this verse was recently used
+                    if not self._is_verse_recently_used(verse_data, recently_used_verses):
+                        logger.info(f"Selected new verse: {verse_data['reference']}")
+                        return verse_data
+                    else:
+                        logger.info(f"Verse {verse_data['reference']} was recently used, trying again...")
+                        continue
+                else:
+                    # If API fails, break and use fallback
+                    break
             
-            # Fallback to preset verses if API fails
-            logger.warning("Bible API failed, using fallback verse")
-            return get_fallback_verse()
+            # Fallback to preset verses if API fails or all attempts used
+            logger.warning("Bible API failed or all verses were recently used, using fallback verse")
+            fallback_verse = get_fallback_verse()
+            
+            # Check if fallback was recently used
+            if self._is_verse_recently_used(fallback_verse, recently_used_verses):
+                logger.warning("Fallback verse was also recently used, but using it anyway")
+            
+            return fallback_verse
             
         except Exception as e:
             logger.error(f"Error getting today's verse: {e}")
@@ -366,6 +387,78 @@ class DailyPoster:
         # This would require Twitter API v2 metrics
         # For now, return recent posts
         return self.get_posting_history(days)
+
+    def _get_recently_used_verses(self, days: int = 14) -> list:
+        """Get verses used in the last N days"""
+        try:
+            if self.db.is_postgres:
+                query = '''
+                    SELECT verse_reference, verse_text, date
+                    FROM daily_posts 
+                    WHERE date >= CURRENT_DATE - INTERVAL '%s days'
+                    ORDER BY date DESC
+                ''' % days
+            else:
+                query = '''
+                    SELECT verse_reference, verse_text, date
+                    FROM daily_posts 
+                    WHERE date >= date('now', '-%d days')
+                    ORDER BY date DESC
+                ''' % days
+            
+            results = self.db.execute_query(query)
+            
+            return [
+                {
+                    'reference': row['verse_reference'],
+                    'text': row['verse_text'],
+                    'date': row['date']
+                }
+                for row in results
+            ]
+            
+        except Exception as e:
+            logger.error(f"Error getting recently used verses: {e}")
+            return []
+
+    def _is_verse_recently_used(self, verse_data: Dict, recently_used_verses: list) -> bool:
+        """Check if a verse was recently used"""
+        if not verse_data or not recently_used_verses:
+            return False
+        
+        verse_reference = verse_data.get('reference', '').strip()
+        verse_text = verse_data.get('text', '').strip()
+        
+        for used_verse in recently_used_verses:
+            # Check by reference (most reliable)
+            if verse_reference and used_verse['reference']:
+                if verse_reference.lower() == used_verse['reference'].lower():
+                    return True
+            
+            # Also check by text similarity (in case references differ slightly)
+            if verse_text and used_verse['text']:
+                # Simple similarity check - if 80% of words match, consider it the same
+                if self._calculate_text_similarity(verse_text, used_verse['text']) > 0.8:
+                    return True
+        
+        return False
+
+    def _calculate_text_similarity(self, text1: str, text2: str) -> float:
+        """Calculate similarity between two verse texts"""
+        if not text1 or not text2:
+            return 0.0
+        
+        # Simple word-based similarity
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        
+        return len(intersection) / len(union) if union else 0.0
 
     def schedule_themed_week(self, theme: str) -> bool:
         """Schedule a week of verses around a specific theme"""
