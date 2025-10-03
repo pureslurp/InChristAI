@@ -57,6 +57,23 @@ class BibleAPI:
             'JAS.1',     # James 1
             '1PE.5',     # 1 Peter 5
             '1JN.4',     # 1 John 4
+            'MAT.4',     # Matthew 4
+            'MAT.5',     # Matthew 5 -- Sermon on the Mount
+            'MAT.6',     # Matthew 6 -- Lord's Prayer
+            'MAT.7',     # Matthew 7 -- Sermon on the Mount
+            'MAT.17',    # Matthew 17 -- Transfiguration
+            'MAT.18',    # Matthew 18 -- Discipleship
+            'MAT.19',    # Matthew 19 -- The Law and the Prophets
+            'MRK.4', # Mark 4 -- Parables
+            'MRK.10',   # Mark 10 -- Parables
+            '1CO.1', # 1 Corinthians 1 -- Paul's Prayer
+            '1CO.2', # 1 Corinthians 2 -- Paul's Wisdom
+            '1CO.3', # 1 Corinthians 3 -- Paul's Building
+            'GAL.5', # Galatians 5 -- Paul's Freedom
+            'EPH.5', # Ephesians 5 -- Paul's Love
+            'EPH.6', # Ephesians 6 -- Paul's Authority
+            'COL.3', # Colossians 3 -- Paul's Mind
+            '1PE.2', # 1 Peter 2 -- Paul's New Birth 
         ]
         
         # Bible verses for different moods and emotions
