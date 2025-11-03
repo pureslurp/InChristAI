@@ -14,6 +14,10 @@ import time
 logger = logging.getLogger(__name__)
 
 class TwitterAPI:
+    # Class-level counter for API read calls (resets on restart)
+    _read_call_count = 0
+    _read_call_limit = 100  # Monthly limit for free tier
+    
     def __init__(self, dry_run=False):
         self.api_key = config.TWITTER_API_KEY
         self.api_secret = config.TWITTER_API_SECRET
@@ -277,8 +281,10 @@ class TwitterAPI:
             else:
                 logger.info("No rate limit headers found")
             
-            # Log every API call for budget tracking
-            logger.warning(f"💰 API CALL MADE: get_mentions() - Monitor your monthly budget (100 calls/month limit)")
+            # Track and log every API call for budget tracking
+            TwitterAPI._read_call_count += 1
+            remaining_budget = TwitterAPI._read_call_limit - TwitterAPI._read_call_count
+            logger.warning(f"💰 API READ CALL #{TwitterAPI._read_call_count}: get_mentions() - {remaining_budget} calls remaining this month (limit: {TwitterAPI._read_call_limit})")
             
             if response.status_code == 200:
                 data = response.json()
@@ -469,8 +475,10 @@ class TwitterAPI:
                 reset_time = rate_limit_headers.get('x-rate-limit-reset', 'unknown')
                 logger.warning(f"📊 API BUDGET: {remaining} calls remaining until reset at {reset_time}")
             
-            # Log every API call for budget tracking
-            logger.warning(f"💰 API CALL MADE: search_tweets('{query}') - Monitor your monthly budget (100 calls/month limit)")
+            # Track and log every API call for budget tracking
+            TwitterAPI._read_call_count += 1
+            remaining_budget = TwitterAPI._read_call_limit - TwitterAPI._read_call_count
+            logger.warning(f"💰 API READ CALL #{TwitterAPI._read_call_count}: search_tweets('{query}') - {remaining_budget} calls remaining this month (limit: {TwitterAPI._read_call_limit})")
             
             if response.status_code == 200:
                 data = response.json()
@@ -559,6 +567,12 @@ class TwitterAPI:
                 }
                 
                 logger.info(f"Making direct HTTP request for conversation search: {url}")
+                
+                # Track this as a read call
+                TwitterAPI._read_call_count += 1
+                remaining_budget = TwitterAPI._read_call_limit - TwitterAPI._read_call_count
+                logger.warning(f"💰 API READ CALL #{TwitterAPI._read_call_count}: get_thread_context({conversation_id}) - {remaining_budget} calls remaining this month")
+                
                 response = requests.get(url, headers=headers, params=params)
                 
                 if response.status_code == 200:
@@ -622,6 +636,12 @@ class TwitterAPI:
             }
             
             logger.info(f"Making direct HTTP request to get original tweet: {url}")
+            
+            # Track this as a read call
+            TwitterAPI._read_call_count += 1
+            remaining_budget = TwitterAPI._read_call_limit - TwitterAPI._read_call_count
+            logger.warning(f"💰 API READ CALL #{TwitterAPI._read_call_count}: get_original_tweet({conversation_id}) - {remaining_budget} calls remaining this month")
+            
             response = requests.get(url, headers=headers, params=params)
             
             if response.status_code == 200:
@@ -677,6 +697,22 @@ class TwitterAPI:
         except Exception as e:
             logger.error(f"Failed to delete tweet {tweet_id}: {e}")
             return False
+    
+    @classmethod
+    def get_read_call_count(cls) -> Dict[str, int]:
+        """Get current API read call statistics"""
+        return {
+            'count': cls._read_call_count,
+            'limit': cls._read_call_limit,
+            'remaining': cls._read_call_limit - cls._read_call_count,
+            'percentage_used': round((cls._read_call_count / cls._read_call_limit) * 100, 1) if cls._read_call_limit > 0 else 0
+        }
+    
+    @classmethod
+    def reset_read_call_count(cls):
+        """Reset the API call counter (useful for tracking monthly usage)"""
+        cls._read_call_count = 0
+        logger.info("API read call counter reset")
     
     def format_verse_tweet(self, verse_data: Dict) -> str:
         """Format a Bible verse for posting on Twitter"""

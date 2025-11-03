@@ -406,13 +406,15 @@ class InChristAI:
         try:
             stats = self.interaction_handler.get_interaction_stats()
             posting_history = self.daily_poster.get_posting_history(7)
+            api_usage = self.twitter_api.get_read_call_count()
             
             status = {
                 'running': self.running,
                 'stats': stats,
                 'recent_posts': posting_history,
                 'next_scheduled_post': schedule.next_run(),
-                'api_status': self.twitter_api.verify_credentials()
+                'api_status': self.twitter_api.verify_credentials(),
+                'api_usage': api_usage
             }
             
             return status

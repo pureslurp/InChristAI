@@ -297,10 +297,97 @@ class InteractionHandler:
         except Exception as e:
             logger.error(f"Error updating interaction response: {e}")
 
-    def _has_responded_to_tweet(self, tweet_id: str) -> bool:
-        """Check if we've already responded to a tweet (database + Twitter API verification)"""
+    def _record_interaction(self, tweet_id: str, user_id: str, tweet_text: str, response_text: str, reply_tweet_id: str, interaction_type: str = 'interaction'):
+        """Record a complete interaction (tweet and reply) in the database
+        
+        This method stores both the original tweet ID and the reply tweet ID,
+        ensuring we have a complete record without needing additional API calls.
+        
+        Args:
+            tweet_id: The ID of the original tweet we responded to
+            user_id: The ID of the user who created the original tweet
+            tweet_text: The text of the original tweet
+            response_text: The text of our reply
+            reply_tweet_id: The ID of our reply tweet
+            interaction_type: Type of interaction (e.g., 'mention', 'prayer_response')
+        """
         try:
-            # First check our local database
+            if self.db.is_postgres:
+                # Insert or update interaction with all information in one operation
+                self.db.execute_update('''
+                    INSERT INTO interactions 
+                    (tweet_id, user_id, mention_text, response_text, response_tweet_id, 
+                     created_at, responded_at, interaction_type, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (tweet_id) DO UPDATE SET
+                        user_id = EXCLUDED.user_id,
+                        mention_text = EXCLUDED.mention_text,
+                        response_text = EXCLUDED.response_text,
+                        response_tweet_id = EXCLUDED.response_tweet_id,
+                        responded_at = EXCLUDED.responded_at,
+                        interaction_type = EXCLUDED.interaction_type,
+                        status = 'completed'
+                ''', (
+                    tweet_id,
+                    user_id,
+                    tweet_text,
+                    response_text,
+                    reply_tweet_id,
+                    datetime.now(),  # created_at
+                    datetime.now(),  # responded_at
+                    interaction_type,
+                    'completed'
+                ))
+            else:
+                # SQLite version
+                self.db.execute_update('''
+                    INSERT OR REPLACE INTO interactions 
+                    (tweet_id, user_id, mention_text, response_text, response_tweet_id, 
+                     created_at, responded_at, interaction_type, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    tweet_id,
+                    user_id,
+                    tweet_text,
+                    response_text,
+                    reply_tweet_id,
+                    datetime.now(),  # created_at
+                    datetime.now(),  # responded_at
+                    interaction_type,
+                    'completed'
+                ))
+            
+            # Also update user information
+            if self.db.is_postgres:
+                self.db.execute_update('''
+                    INSERT INTO users 
+                    (user_id, last_interaction, interaction_count)
+                    VALUES (%s, %s, 1)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        last_interaction = EXCLUDED.last_interaction,
+                        interaction_count = users.interaction_count + 1
+                ''', (user_id, datetime.now()))
+            else:
+                self.db.execute_update('''
+                    INSERT OR REPLACE INTO users 
+                    (user_id, last_interaction, interaction_count)
+                    VALUES (?, ?, COALESCE((SELECT interaction_count FROM users WHERE user_id = ?) + 1, 1))
+                ''', (user_id, datetime.now(), user_id))
+            
+            logger.info(f"Recorded interaction: tweet_id={tweet_id}, reply_id={reply_tweet_id}, type={interaction_type}")
+            
+        except Exception as e:
+            logger.error(f"Error recording interaction: {e}")
+            raise  # Re-raise to ensure caller knows if recording failed
+
+    def _has_responded_to_tweet(self, tweet_id: str) -> bool:
+        """Check if we've already responded to a tweet (database only to preserve API quota)
+        
+        WARNING: Do NOT add Twitter API verification here - it causes expensive API calls
+        that quickly exhaust the monthly quota. The database is the source of truth.
+        """
+        try:
+            # Check our local database only - no API calls to preserve quota
             results = self.db.execute_query(
                 'SELECT response_tweet_id FROM interactions WHERE tweet_id = %s' if self.db.is_postgres else 
                 'SELECT response_tweet_id FROM interactions WHERE tweet_id = ?', 
@@ -311,36 +398,13 @@ class InteractionHandler:
                 logger.info(f"Database shows we responded to {tweet_id}")
                 return True
             
-            # Fallback: Check Twitter to see if we've replied to this tweet
-            # This handles database resets between deployments
-            logger.info(f"Database check failed, verifying via Twitter API for tweet {tweet_id}")
-            return self._check_twitter_for_our_reply(tweet_id)
+            # No API fallback - database is source of truth to preserve monthly quota
+            logger.debug(f"Database shows no response to tweet {tweet_id}")
+            return False
             
         except Exception as e:
             logger.error(f"Error checking if responded to tweet: {e}")
-            # If database fails, still check Twitter as fallback
-            return self._check_twitter_for_our_reply(tweet_id)
-    
-    def _check_twitter_for_our_reply(self, tweet_id: str) -> bool:
-        """Check Twitter directly to see if we've already replied to a tweet"""
-        try:
-            # Use our Twitter search to find tweets that are replies to this tweet
-            search_query = f"in_reply_to_tweet_id:{tweet_id} from:{self.twitter_api.bot_username}"
-            logger.info(f"Searching Twitter for our replies: {search_query}")
-            
-            # Search for our replies to this tweet
-            search_results = self.twitter_api.search_tweets(search_query, count=10)
-            
-            if search_results:
-                logger.info(f"Found {len(search_results)} existing replies from us to tweet {tweet_id}")
-                return True
-            else:
-                logger.info(f"No existing replies found for tweet {tweet_id}")
-                return False
-                
-        except Exception as e:
-            logger.warning(f"Error checking Twitter for existing replies to {tweet_id}: {e}")
-            # If Twitter check fails, err on side of caution - assume not replied
+            # If database fails, err on side of caution - assume not replied (but don't make API call)
             return False
 
     def _is_user_rate_limited(self, user_id: str) -> bool:
