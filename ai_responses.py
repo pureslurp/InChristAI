@@ -613,6 +613,9 @@ If you cannot determine a clear mood, use "sad" as default.
                 result = json.loads(ai_response)
                 detected_mood = result.get('detected_mood', 'sad')
                 
+                # Normalize the mood: strip whitespace and convert to lowercase
+                detected_mood = detected_mood.strip().lower()
+                
                 # Validate the mood is in our available list
                 if detected_mood not in available_moods:
                     logger.warning(f"AI returned unknown mood '{detected_mood}', defaulting to 'sad'")

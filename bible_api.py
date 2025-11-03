@@ -244,8 +244,16 @@ class BibleAPI:
 
     def get_verse_by_mood(self, mood: str, version: str = 'ESV') -> Optional[Dict]:
         """Get a random verse reference for a specific mood"""
+        # Normalize the mood: strip whitespace and convert to lowercase
+        mood = mood.strip().lower()
+        
         # Use getattr to dynamically access the mood attribute, default to 'sad' if mood doesn't exist
         mood_verses = getattr(self, mood, self.sad)
+        
+        # Log if we had to default to 'sad' due to unknown mood
+        if mood not in self.get_available_moods():
+            logger.warning(f"Unknown mood '{mood}' passed to get_verse_by_mood, defaulting to 'sad'")
+        
         verse_reference = random.choice(mood_verses)
         
         # Get the full verse data using the reference
