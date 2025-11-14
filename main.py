@@ -148,12 +148,12 @@ class InChristAI:
             
             # Schedule mention checking once per day (X API Free tier: 100 calls/month limit)
             # This uses ~30 calls/month for mentions (expansions parameter gets original tweet context)
-            schedule.every().day.at("09:00").do(self._check_mentions)
+            self._schedule_timezone_aware_task("09:00", bot_timezone, self._check_mentions, "mention checking at 9:00 AM")
             logger.info("Scheduled mention checking once daily at 9:00 AM (X API Free tier: 100 calls/month)")
             
             # Schedule prayer search once daily (X API Free tier: 100 calls/month limit)
             # This uses ~30 calls/month, combined with mentions = ~60 calls/month total (40 calls buffer)
-            schedule.every().day.at("10:00").do(lambda: self._search_and_respond_to_prayers(dry_run=True))
+            self._schedule_timezone_aware_task("10:00", bot_timezone, lambda: self._search_and_respond_to_prayers(dry_run=True), "prayer search at 10:00 AM")
             logger.info("Scheduled prayer search once daily at 10:00 AM (X API Free tier: 100 calls/month)")
             
             # Schedule daily cleanup at midnight
@@ -342,45 +342,50 @@ class InChristAI:
             logger.error(f"Error checking mentions: {e}")
             return False
 
-    def _setup_timezone_aware_schedule(self, posting_time: str, timezone_name: str):
-        """Set up timezone-aware daily posting schedule"""
+    def _schedule_timezone_aware_task(self, target_time: str, timezone_name: str, task_func, task_description: str = "task"):
+        """Schedule a task at a specific time in a specific timezone
+        
+        Args:
+            target_time: Time in HH:MM format (e.g., "09:00")
+            timezone_name: Timezone name (e.g., "America/New_York")
+            task_func: Function to call when scheduled
+            task_description: Description for logging
+        """
         try:
             # Create timezone object
             tz = pytz.timezone(timezone_name)
             
-            # Get current time in the target timezone
-            now_tz = datetime.now(tz)
-            logger.info(f"Current time in {timezone_name}: {now_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            
-            # Parse posting time
-            hour, minute = map(int, posting_time.split(':'))
+            # Parse target time
+            hour, minute = map(int, target_time.split(':'))
             
             # Create a wrapper function that handles timezone conversion
-            def timezone_aware_post():
+            def timezone_aware_task():
                 # Get current time in target timezone
                 current_time_tz = datetime.now(tz)
-                logger.info(f"Daily post check: Current time in {timezone_name}: {current_time_tz.strftime('%H:%M:%S')}, Target: {posting_time}")
-                
-                # For schedule library, we need to let it handle the daily scheduling
-                # Just execute the post since schedule already determined it's time
-                self._post_daily_verse()
+                logger.info(f"{task_description} check: Current time in {timezone_name}: {current_time_tz.strftime('%H:%M:%S')}, Target: {target_time}")
+                # Execute the task
+                task_func()
             
             # Convert target time to UTC for scheduling
             # Create a sample date in the target timezone
             sample_date = datetime.now(tz).replace(hour=hour, minute=minute, second=0, microsecond=0)
             utc_time = sample_date.astimezone(pytz.UTC)
-            utc_posting_time = utc_time.strftime('%H:%M')
+            utc_target_time = utc_time.strftime('%H:%M')
             
-            logger.info(f"Converting {posting_time} {timezone_name} to {utc_posting_time} UTC for scheduling")
+            logger.info(f"Converting {target_time} {timezone_name} to {utc_target_time} UTC for {task_description}")
             
             # Schedule using UTC time (what the server runs on)
-            schedule.every().day.at(utc_posting_time).do(timezone_aware_post)
+            schedule.every().day.at(utc_target_time).do(timezone_aware_task)
             
         except Exception as e:
-            logger.error(f"Error setting up timezone-aware schedule: {e}")
+            logger.error(f"Error setting up timezone-aware schedule for {task_description}: {e}")
             # Fallback to regular scheduling
-            logger.info("Falling back to regular scheduling (UTC)")
-            schedule.every().day.at(posting_time).do(self._post_daily_verse)
+            logger.info(f"Falling back to regular scheduling (UTC) for {task_description}")
+            schedule.every().day.at(target_time).do(task_func)
+
+    def _setup_timezone_aware_schedule(self, posting_time: str, timezone_name: str):
+        """Set up timezone-aware daily posting schedule"""
+        self._schedule_timezone_aware_task(posting_time, timezone_name, self._post_daily_verse, "Daily post")
 
     def run_once(self, task: str = None, force=False):
         """Run a specific task once (for testing/manual execution)"""
