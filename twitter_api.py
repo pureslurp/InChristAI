@@ -3,7 +3,7 @@ Twitter API integration for posting and monitoring mentions
 """
 import tweepy
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 # Use cloud config if available, fallback to local config
 try:
     import config_cloud as config
@@ -14,8 +14,8 @@ import time
 logger = logging.getLogger(__name__)
 
 class TwitterAPI:
-    # Class-level counter for API read calls (resets on restart)
-    _read_call_count = 0
+    # Class-level counter for API read calls (resets on restart - use get_actual_usage() for real count)
+    _read_call_count = 0  # Session-only counter
     _read_call_limit = 100  # Monthly limit for free tier
     
     def __init__(self, dry_run=False):
@@ -284,7 +284,7 @@ class TwitterAPI:
             # Track and log every API call for budget tracking
             TwitterAPI._read_call_count += 1
             remaining_budget = TwitterAPI._read_call_limit - TwitterAPI._read_call_count
-            logger.warning(f"💰 API READ CALL #{TwitterAPI._read_call_count}: get_mentions() - {remaining_budget} calls remaining this month (limit: {TwitterAPI._read_call_limit})")
+            logger.warning(f"💰 API READ CALL #{TwitterAPI._read_call_count} (session): get_mentions() - Session: {remaining_budget} remaining (NOTE: This counter resets on restart. Use get_actual_usage() for real monthly count)")
             
             if response.status_code == 200:
                 data = response.json()
@@ -458,6 +458,8 @@ class TwitterAPI:
             
             logger.info(f"Making direct HTTP search request to: {url}")
             logger.info(f"Search query: '{query}', max_results: {api_count}")
+            logger.warning(f"⚠️  INVESTIGATING: Checking if X API counts each returned tweet as a separate call")
+            logger.warning(f"   If so, requesting {api_count} tweets might use {api_count} API calls instead of 1")
             
             response = requests.get(url, headers=headers, params=params)
             logger.info(f"HTTP Response status: {response.status_code}")
@@ -476,17 +478,22 @@ class TwitterAPI:
                 logger.warning(f"📊 API BUDGET: {remaining} calls remaining until reset at {reset_time}")
             
             # Track and log every API call for budget tracking
+            # NOTE: We increment by 1 assuming 1 request = 1 call, but X API might count differently
             TwitterAPI._read_call_count += 1
             remaining_budget = TwitterAPI._read_call_limit - TwitterAPI._read_call_count
-            logger.warning(f"💰 API READ CALL #{TwitterAPI._read_call_count}: search_tweets('{query}') - {remaining_budget} calls remaining this month (limit: {TwitterAPI._read_call_limit})")
+            logger.warning(f"💰 API READ CALL #{TwitterAPI._read_call_count} (session): search_tweets('{query}') - Session: {remaining_budget} remaining (NOTE: This counter assumes 1 request = 1 call, but X API might count each returned tweet)")
             
             if response.status_code == 200:
                 data = response.json()
                 logger.info(f"Response data keys: {list(data.keys()) if data else 'None'}")
                 
                 results = []
+                tweets_returned = 0
                 if 'data' in data and data['data']:
-                    logger.info(f"Found {len(data['data'])} tweets via direct HTTP search")
+                    tweets_returned = len(data['data'])
+                    logger.info(f"Found {tweets_returned} tweets via direct HTTP search")
+                    logger.warning(f"⚠️  If X API counts each tweet as a call, this request used {tweets_returned} calls, not 1!")
+                    logger.warning(f"   Please check actual monthly usage after this call to verify")
                     
                     for tweet_data in data['data']:
                         tweet_result = {
@@ -700,19 +707,113 @@ class TwitterAPI:
     
     @classmethod
     def get_read_call_count(cls) -> Dict[str, int]:
-        """Get current API read call statistics"""
+        """Get current API read call statistics (session-only counter)"""
         return {
-            'count': cls._read_call_count,
+            'session_count': cls._read_call_count,  # Only counts calls since last restart
             'limit': cls._read_call_limit,
-            'remaining': cls._read_call_limit - cls._read_call_count,
-            'percentage_used': round((cls._read_call_count / cls._read_call_limit) * 100, 1) if cls._read_call_limit > 0 else 0
+            'session_remaining': cls._read_call_limit - cls._read_call_count,
+            'percentage_used': round((cls._read_call_count / cls._read_call_limit) * 100, 1) if cls._read_call_limit > 0 else 0,
+            'note': 'Session counter resets on restart. Use get_actual_usage() for real monthly count.'
         }
+    
+    def get_actual_usage(self) -> Dict[str, Any]:
+        """Get actual monthly API usage from X API endpoint
+        
+        This queries the official X API usage endpoint to get the real monthly count,
+        which persists across app restarts.
+        
+        Returns:
+            Dict with actual usage data from X API
+        """
+        try:
+            import requests
+            from datetime import datetime
+            
+            # Query the official usage endpoint (this is a read call, but necessary for accurate tracking)
+            usage_url = "https://api.x.com/2/usage/tweets"
+            headers = {
+                "Authorization": f"Bearer {self.bearer_token}",
+                "Content-Type": "application/json"
+            }
+            
+            logger.info("📡 Checking actual monthly API usage from X API...")
+            response = requests.get(usage_url, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # The usage API returns data in a specific format
+                # Parse it based on X API documentation
+                usage_info = {
+                    'source': 'x_api_official',
+                    'raw_data': data,
+                    'limit': self._read_call_limit,
+                }
+                
+                # Extract monthly usage from the actual data structure
+                if 'data' in data and isinstance(data['data'], dict):
+                    usage_data = data['data']
+                    # The actual monthly usage is in 'project_usage' field
+                    if 'project_usage' in usage_data:
+                        monthly_used = int(usage_data['project_usage'])
+                        monthly_limit = int(usage_data.get('project_cap', self._read_call_limit))
+                        monthly_remaining = monthly_limit - monthly_used
+                        cap_reset_day = usage_data.get('cap_reset_day', None)
+                        
+                        usage_info.update({
+                            'monthly_used': monthly_used,
+                            'monthly_remaining': monthly_remaining,
+                            'monthly_limit': monthly_limit,
+                            'monthly_percentage': round((monthly_used / monthly_limit) * 100, 1) if monthly_limit > 0 else 0,
+                            'cap_reset_day': cap_reset_day,  # Day of month when quota resets
+                            'project_id': usage_data.get('project_id', None),
+                            'project_cap': monthly_limit,
+                            'project_usage': monthly_used
+                        })
+                    
+                    # Also store other data fields
+                    for key, value in usage_data.items():
+                        if key not in ['project_usage', 'project_cap']:  # Already processed above
+                            usage_info[key] = value
+                
+                # Also check rate limit headers for short-term rate limit info (15-min windows)
+                rate_limit_headers = {}
+                for header_name in response.headers:
+                    if 'rate' in header_name.lower() or 'limit' in header_name.lower():
+                        rate_limit_headers[header_name] = response.headers[header_name]
+                
+                if rate_limit_headers:
+                    usage_info['rate_limit_headers'] = rate_limit_headers
+                    usage_info['note'] = 'rate_limit_headers are for short-term limits (15-min), not monthly limits'
+                
+                logger.info(f"✅ Retrieved actual monthly usage: {usage_info.get('monthly_used', 'unknown')}/{usage_info.get('monthly_limit', 100)} calls")
+                return usage_info
+            else:
+                logger.warning(f"⚠️  Usage API returned {response.status_code}: {response.text[:200]}")
+                return {
+                    'source': 'x_api_official',
+                    'error': f"HTTP {response.status_code}",
+                    'session_count': TwitterAPI._read_call_count,
+                    'limit': self._read_call_limit,
+                    'note': 'Could not retrieve actual usage. Session count may not reflect real monthly usage.'
+                }
+                
+        except Exception as e:
+            logger.error(f"❌ Error getting actual usage: {e}")
+            return {
+                'source': 'error',
+                'error': str(e),
+                'session_count': TwitterAPI._read_call_count,
+                'limit': self._read_call_limit,
+                'note': 'Error retrieving actual usage. Session count may not reflect real monthly usage.'
+            }
     
     @classmethod
     def reset_read_call_count(cls):
-        """Reset the API call counter (useful for tracking monthly usage)"""
+        """Reset the session API call counter (only affects session counter, not actual X API usage)"""
+        old_count = cls._read_call_count
         cls._read_call_count = 0
-        logger.info("API read call counter reset")
+        logger.info(f"API read call session counter reset (was {old_count}). Note: Actual X API monthly usage is not affected.")
     
     def format_verse_tweet(self, verse_data: Dict) -> str:
         """Format a Bible verse for posting on Twitter"""

@@ -82,6 +82,28 @@ class InChristAI:
 
             logger.info("InChrist AI Bot starting up...")
             
+            # Check actual monthly API usage on startup
+            try:
+                actual_usage = self.twitter_api.get_actual_usage()
+                if 'monthly_used' in actual_usage:
+                    monthly_used = actual_usage['monthly_used']
+                    monthly_limit = actual_usage.get('monthly_limit', 100)
+                    monthly_remaining = actual_usage.get('monthly_remaining', monthly_limit - monthly_used)
+                    cap_reset_day = actual_usage.get('cap_reset_day', None)
+                    
+                    logger.warning(f"📊 ACTUAL MONTHLY API USAGE: {monthly_used}/{monthly_limit} calls used ({actual_usage.get('monthly_percentage', 0):.1f}%), {monthly_remaining} remaining")
+                    if cap_reset_day:
+                        logger.info(f"📅 Monthly quota resets on day {cap_reset_day} of each month")
+                    
+                    if monthly_remaining < 20:
+                        logger.error(f"⚠️  WARNING: Only {monthly_remaining} API calls remaining this month! Use sparingly.")
+                    elif monthly_remaining < 50:
+                        logger.warning(f"⚡ CAUTION: {monthly_remaining} API calls remaining this month. Monitor usage carefully.")
+                else:
+                    logger.info("📊 Could not retrieve actual monthly usage (may need to check manually)")
+            except Exception as e:
+                logger.warning(f"Could not check actual API usage on startup: {e}")
+            
             # Start health check web server for cloud deployment
             if hasattr(config, 'PORT'):
                 self.web_server = start_health_server(self, config.PORT)
@@ -206,7 +228,10 @@ class InChristAI:
             combined_query = "pray OR \"prayer request\" OR \"thoughts and prayers\""
             logger.info(f"Making single Twitter API call with query: {combined_query}")
             
-            tweets = self.twitter_api.search_tweets(combined_query, count=50)  # Increased count for better variety
+            # Changed from 50 to 10 to reduce potential API call usage
+            # NOTE: Investigating if X API counts each returned tweet as a separate call
+            # If so, returning 50 tweets = 50 API calls. Reducing to 10 for testing.
+            tweets = self.twitter_api.search_tweets(combined_query, count=10)
             
             if not tweets:
                 logger.warning("No tweets found - likely rate limited or no matching content")
@@ -401,12 +426,16 @@ class InChristAI:
             logger.error(f"Error running task {task}: {e}")
             return False
 
-    def get_status(self):
-        """Get current bot status"""
+    def get_status(self, check_actual_usage=False):
+        """Get current bot status
+        
+        Args:
+            check_actual_usage: If True, queries X API for actual monthly usage (may count as a read call)
+        """
         try:
             stats = self.interaction_handler.get_interaction_stats()
             posting_history = self.daily_poster.get_posting_history(7)
-            api_usage = self.twitter_api.get_read_call_count()
+            api_usage_session = self.twitter_api.get_read_call_count()
             
             status = {
                 'running': self.running,
@@ -414,8 +443,20 @@ class InChristAI:
                 'recent_posts': posting_history,
                 'next_scheduled_post': schedule.next_run(),
                 'api_status': self.twitter_api.verify_credentials(),
-                'api_usage': api_usage
+                'api_usage': {
+                    'session': api_usage_session,
+                }
             }
+            
+            # Optionally check actual usage (may count as a read call)
+            if check_actual_usage:
+                try:
+                    api_usage_actual = self.twitter_api.get_actual_usage()
+                    status['api_usage']['actual_monthly'] = api_usage_actual
+                    logger.info("Actual monthly usage retrieved (note: this may count as a read call)")
+                except Exception as e:
+                    logger.warning(f"Could not retrieve actual usage: {e}")
+                    status['api_usage']['actual_monthly'] = {'error': str(e), 'note': 'Could not retrieve'}
             
             return status
             
@@ -486,8 +527,13 @@ Examples:
                 
         elif task == "status":
             bot = InChristAI(dry_run=dry_run)
-            status = bot.get_status()
+            # Only check actual usage if explicitly requested to save API calls
+            check_actual = "--check-usage" in sys.argv or "-u" in sys.argv
+            status = bot.get_status(check_actual_usage=check_actual)
             print(f"Bot Status: {status}")
+            if not check_actual:
+                print("\n💡 Tip: Use --check-usage or -u flag to see actual monthly API usage")
+                print("   Note: This may count as a read call")
             
         else:
             print(f"Unknown command: {task}")
