@@ -151,10 +151,15 @@ class InChristAI:
             self._schedule_timezone_aware_task("09:00", bot_timezone, self._check_mentions, "mention checking at 9:00 AM")
             logger.info("Scheduled mention checking once daily at 9:00 AM (X API Free tier: 100 calls/month)")
             
-            # Schedule prayer search once daily (X API Free tier: 100 calls/month limit)
-            # This uses ~30 calls/month, combined with mentions = ~60 calls/month total (40 calls buffer)
-            self._schedule_timezone_aware_task("10:00", bot_timezone, lambda: self._search_and_respond_to_prayers(dry_run=True), "prayer search at 10:00 AM")
-            logger.info("Scheduled prayer search once daily at 10:00 AM (X API Free tier: 100 calls/month)")
+            # Schedule prayer search every 3 days (X API Free tier: 100 calls/month limit)
+            # NOTE: Each returned tweet counts as 1 API call, not just the search request
+            search_count = getattr(config, 'PRAYER_SEARCH_COUNT', 5)
+            search_interval = getattr(config, 'PRAYER_SEARCH_INTERVAL_DAYS', 3)
+            
+            self._schedule_interval_task("10:00", bot_timezone, search_interval, 
+                                        lambda: self._search_and_respond_to_prayers(dry_run=self.dry_run), 
+                                        f"prayer search at 10:00 AM (every {search_interval} days)")
+            logger.info(f"Scheduled prayer search every {search_interval} days at 10:00 AM ({search_count} tweets per search)")
             
             # Schedule daily cleanup at midnight
             schedule.every().day.at("00:00").do(self._daily_cleanup)
@@ -221,59 +226,49 @@ class InChristAI:
     def _search_and_respond_to_prayers(self, dry_run=False):
         """Scheduled task to search for prayer requests and respond with encouragement"""
         try:
-            logger.info("🙏 Starting prayer search and response cycle...")
-            
-            # Step 1: Search for prayer-related tweets (SINGLE Twitter API call)
-            # Use OR operator to search for multiple terms in one request
+            # Step 1: Search for prayer-related tweets
             combined_query = "pray OR \"prayer request\" OR \"thoughts and prayers\""
-            logger.info(f"Making single Twitter API call with query: {combined_query}")
+            search_count = getattr(config, 'PRAYER_SEARCH_COUNT', 5)
             
-            # Changed from 50 to 10 to reduce potential API call usage
-            # NOTE: Investigating if X API counts each returned tweet as a separate call
-            # If so, returning 50 tweets = 50 API calls. Reducing to 10 for testing.
-            tweets = self.twitter_api.search_tweets(combined_query, count=10)
+            tweets = self.twitter_api.search_tweets(combined_query, count=search_count)
             
             if not tweets:
-                logger.warning("No tweets found - likely rate limited or no matching content")
+                logger.info("🔍 Prayer search: No tweets found")
                 return False
             
-            logger.info(f"✅ Found {len(tweets)} prayer-related tweets with 1 API call")
+            logger.info(f"🔍 Prayer search: Found {len(tweets)} potential tweets")
+            for i, tweet in enumerate(tweets, 1):
+                logger.info(f"  {i}. {tweet['text'][:80]}...")
             
             # Step 2: Use AI to select best tweet and generate response
             result = self.ai_generator.select_and_respond_to_tweet(tweets)
             
             if not result:
-                logger.info("AI found no suitable tweets for spiritual response")
+                logger.info("🔍 Prayer search: No suitable tweets found for response")
                 return True  # Not an error, just no good candidates
             
-            # Step 3: Log the analysis results
-            logger.info("🎯 AI Analysis Results:")
-            logger.info(f"Selected Tweet (FULL): {result.selected_tweet.text}")
-            logger.info(f"Author: {result.selected_tweet.author_id}")
-            logger.info(f"Tweet ID: {result.selected_tweet.id}")
-            logger.info(f"Detected Mood: {result.detected_mood}")
-            logger.info(f"Bible Verse: {result.bible_verse['reference']}")
-            logger.info(f"Response Length: {len(result.response_text)} chars")
+            # Step 3: Log the selected tweet and analysis
+            logger.info(f"📝 Selected Tweet: {result.selected_tweet.text}")
+            logger.info(f"🎯 Detected Mood: {result.detected_mood} - {result.reasoning}")
+            logger.info(f"📖 Bible Verse: {result.bible_verse['reference']}")
             
-            # Step 4: Check if we've already responded to this tweet (database only to avoid extra API calls)
+            # Step 4: Check if we've already responded to this tweet
             if self._has_responded_to_tweet_db_only(result.selected_tweet.id):
-                logger.info("Already responded to this tweet, skipping...")
+                logger.info("🔍 Prayer search: Already responded to this tweet, skipping")
                 return True
             
             # Step 5: Post the response
             if dry_run:
-                logger.info("🏃‍♂️ DRY RUN - Would post prayer response:")
-                logger.info(f"Tweet ID: {result.selected_tweet.id}")
-                logger.info(f"Response: {result.response_text}")
+                logger.info(f"🏃‍♂️ DRY RUN - Would post response: {result.response_text}")
             else:
-                logger.info("📤 Posting prayer response...")
                 reply_id = self.twitter_api.reply_to_tweet(
                     result.selected_tweet.id,
                     result.response_text
                 )
                 
                 if reply_id:
-                    logger.info(f"✅ Successfully posted prayer response: {reply_id}")
+                    logger.info(f"✅ Prayer response posted successfully: {reply_id}")
+                    logger.info(f"📝 Response: {result.response_text}")
                     
                     # Record the interaction in database
                     try:
@@ -285,15 +280,12 @@ class InChristAI:
                             reply_id,
                             'prayer_response'
                         )
-                        logger.info("Interaction recorded in database")
                     except Exception as e:
                         logger.warning(f"Failed to record interaction: {e}")
-                        
                 else:
                     logger.error("❌ Failed to post prayer response")
                     return False
             
-            logger.info("🙏 Prayer search and response cycle completed successfully")
             return True
             
         except Exception as e:
@@ -324,7 +316,6 @@ class InChristAI:
     def _check_mentions(self):
         """Scheduled task to check and respond to mentions (database-only to preserve rate limits)"""
         try:
-            logger.info("🔔 Checking mentions...")
             # Temporarily patch the interaction handler to use database-only checks
             # This preserves the search rate limit for prayer search functionality
             original_method = self.interaction_handler._has_responded_to_tweet
@@ -332,7 +323,6 @@ class InChristAI:
             
             try:
                 count = self.interaction_handler.process_mentions()
-                logger.info(f"✅ Processed {count} mentions (database-only checks)")
                 return count > 0
             finally:
                 # Restore original method
@@ -360,9 +350,6 @@ class InChristAI:
             
             # Create a wrapper function that handles timezone conversion
             def timezone_aware_task():
-                # Get current time in target timezone
-                current_time_tz = datetime.now(tz)
-                logger.info(f"{task_description} check: Current time in {timezone_name}: {current_time_tz.strftime('%H:%M:%S')}, Target: {target_time}")
                 # Execute the task
                 task_func()
             
@@ -382,6 +369,61 @@ class InChristAI:
             # Fallback to regular scheduling
             logger.info(f"Falling back to regular scheduling (UTC) for {task_description}")
             schedule.every().day.at(target_time).do(task_func)
+
+    def _schedule_interval_task(self, target_time: str, timezone_name: str, interval_days: int, task_func, task_description: str = "task"):
+        """Schedule a task to run every N days at a specific time in a specific timezone
+        
+        Args:
+            target_time: Time in HH:MM format (e.g., "10:00")
+            timezone_name: Timezone name (e.g., "America/New_York")
+            interval_days: Number of days between runs (1 = daily, 2 = every other day, 3 = every 3 days, etc.)
+            task_func: Function to call when scheduled
+            task_description: Description for logging
+        """
+        try:
+            # Create timezone object
+            tz = pytz.timezone(timezone_name)
+            
+            # Parse target time
+            hour, minute = map(int, target_time.split(':'))
+            
+            # Track last run date (simple in-memory tracking)
+            last_run_date = [None]  # Use list to allow modification in nested function
+            
+            # Create a wrapper function that checks interval and handles timezone conversion
+            def interval_task():
+                # Get current time in target timezone
+                current_time_tz = datetime.now(tz)
+                current_date = current_time_tz.date()
+                current_hour = current_time_tz.hour
+                current_minute = current_time_tz.minute
+                
+                # Only check at the target time (within the target hour)
+                if current_hour != hour:
+                    return  # Not the right hour yet
+                
+                # Check if we should run based on interval
+                if last_run_date[0] is not None:
+                    days_since_last_run = (current_date - last_run_date[0]).days
+                    if days_since_last_run < interval_days:
+                        return  # Not enough days have passed
+                
+                # Run if we're at or past the target time
+                if current_minute >= minute:
+                    logger.info(f"{task_description}: Running (every {interval_days} days)")
+                    task_func()
+                    last_run_date[0] = current_date
+            
+            # Schedule to run every hour to check if it's time
+            schedule.every().hour.do(interval_task)
+            
+            logger.info(f"Scheduled {task_description} to run every {interval_days} days at {target_time} {timezone_name}")
+            
+        except Exception as e:
+            logger.error(f"Error setting up interval schedule for {task_description}: {e}")
+            # Fallback: schedule daily
+            logger.info(f"Falling back to daily scheduling for {task_description}")
+            self._schedule_timezone_aware_task(target_time, timezone_name, task_func, task_description)
 
     def _setup_timezone_aware_schedule(self, posting_time: str, timezone_name: str):
         """Set up timezone-aware daily posting schedule"""

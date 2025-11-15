@@ -38,3 +38,8 @@ AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.7"))
 # Cloud deployment settings
 PORT = int(os.getenv("PORT", 8080))
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+
+# X API Free Tier Optimization (100 calls/month limit)
+# Each tweet returned from search counts as 1 API call
+PRAYER_SEARCH_COUNT = int(os.getenv("PRAYER_SEARCH_COUNT", "5"))  # Number of tweets to return (each = 1 API call)
+PRAYER_SEARCH_INTERVAL_DAYS = int(os.getenv("PRAYER_SEARCH_INTERVAL_DAYS", "3"))  # Run search every N days

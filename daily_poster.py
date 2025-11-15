@@ -51,7 +51,8 @@ class DailyPoster:
                 
                 if tweet_id:
                     self._record_daily_post(today, verse_data, tweet_id, force=force)
-                    logger.info(f"Successfully posted daily verse: {tweet_id}")
+                    logger.info(f"✅ Daily verse posted successfully: {tweet_id}")
+                    logger.info(f"📝 {tweet_text}")
                     return True
                 else:
                     logger.error("Failed to post daily verse")
@@ -66,7 +67,6 @@ class DailyPoster:
         try:
             # Get recently used verses (last 14 days)
             recently_used_verses = self._get_recently_used_verses(days=14)
-            logger.info(f"Found {len(recently_used_verses)} verses used in the last 14 days")
             
             # Try to get verse from API, checking for duplicates
             max_attempts = 5  # Limit attempts to avoid infinite loops
@@ -76,10 +76,8 @@ class DailyPoster:
                 if verse_data:
                     # Check if this verse was recently used
                     if not self._is_verse_recently_used(verse_data, recently_used_verses):
-                        logger.info(f"Selected new verse: {verse_data['reference']}")
                         return verse_data
                     else:
-                        logger.info(f"Verse {verse_data['reference']} was recently used, trying again...")
                         continue
                 else:
                     # If API fails, break and use fallback
@@ -88,11 +86,6 @@ class DailyPoster:
             # Fallback to preset verses if API fails or all attempts used
             logger.warning("Bible API failed or all verses were recently used, using fallback verse")
             fallback_verse = get_fallback_verse()
-            
-            # Check if fallback was recently used
-            if self._is_verse_recently_used(fallback_verse, recently_used_verses):
-                logger.warning("Fallback verse was also recently used, but using it anyway")
-            
             return fallback_verse
             
         except Exception as e:
@@ -111,21 +104,19 @@ class DailyPoster:
                 logger.error("Failed to post main verse tweet")
                 return False
             
-            logger.info(f"Posted main verse tweet: {main_tweet_id}")
-            
             # Generate AI reflection for the reply
             reflection = self.ai_generator.generate_daily_post_text(verse_data)
             
             # Post the reflection as a reply
             reply_tweet_id = self.twitter_api.reply_to_tweet(main_tweet_id, reflection)
-            if not reply_tweet_id:
-                logger.warning(f"Failed to post reflection reply, but main tweet succeeded: {main_tweet_id}")
-                # Still consider this a success since the main tweet posted
-            else:
-                logger.info(f"Posted reflection reply: {reply_tweet_id}")
             
             # Record in database
             self._record_daily_post(today, verse_data, main_tweet_id, force=force, reply_id=reply_tweet_id)
+            
+            logger.info(f"✅ Daily verse posted successfully: {main_tweet_id}")
+            logger.info(f"📝 {verse_tweet}")
+            if reply_tweet_id:
+                logger.info(f"📝 Reply: {reflection}")
             
             return True
             
