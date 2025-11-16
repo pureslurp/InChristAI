@@ -27,8 +27,14 @@ TWITTER_USER_ID = os.getenv("TWITTER_USER_ID", "1967203305995595776")
 POSTING_TIME = os.getenv("POSTING_TIME", "08:00")  # 24-hour format
 TIMEZONE = os.getenv("TIMEZONE", "America/New_York")
 
-# Database - support both SQLite (local) and PostgreSQL (cloud)
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///inchrist_ai.db")
+# Database - PostgreSQL required (Railway)
+# DATABASE_URL must be set as an environment variable
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError(
+        "DATABASE_URL environment variable is required. "
+        "Please set it to your PostgreSQL connection string."
+    )
 
 # AI Response Configuration
 MAX_RESPONSE_LENGTH = int(os.getenv("MAX_RESPONSE_LENGTH", "180"))

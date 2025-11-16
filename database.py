@@ -1,5 +1,6 @@
 """
-Database abstraction layer supporting both SQLite and PostgreSQL
+Database abstraction layer for PostgreSQL (Railway)
+Requires DATABASE_URL environment variable to be set.
 """
 import os
 import logging
@@ -9,16 +10,29 @@ from contextlib import contextmanager
 logger = logging.getLogger(__name__)
 
 class DatabaseManager:
-    """Database manager that supports both SQLite and PostgreSQL"""
+    """Database manager for PostgreSQL (Railway)"""
     
     def __init__(self, database_url: Optional[str] = None):
-        self.database_url = database_url or os.getenv('DATABASE_URL', 'sqlite:///inchrist_ai.db')
+        # Require DATABASE_URL to be set - no SQLite fallback
+        self.database_url = database_url or os.getenv('DATABASE_URL')
+        
+        if not self.database_url:
+            raise ValueError(
+                "DATABASE_URL environment variable is required. "
+                "Please set it to your PostgreSQL connection string. "
+                "Example: postgresql://user:password@host:port/database"
+            )
+        
         self.is_postgres = self.database_url.startswith('postgresql://') or self.database_url.startswith('postgres://')
         
-        if self.is_postgres:
-            self._init_postgres()
-        else:
-            self._init_sqlite()
+        if not self.is_postgres:
+            raise ValueError(
+                f"Only PostgreSQL databases are supported. "
+                f"DATABASE_URL must start with 'postgresql://' or 'postgres://'. "
+                f"Current value: {self.database_url[:50]}..."
+            )
+        
+        self._init_postgres()
     
     def _init_postgres(self):
         """Initialize PostgreSQL connection"""

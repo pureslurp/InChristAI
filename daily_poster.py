@@ -293,8 +293,7 @@ class DailyPoster:
         """Check if we've already posted today"""
         try:
             results = self.db.execute_query(
-                'SELECT id FROM daily_posts WHERE date = %s' if self.db.is_postgres else 
-                'SELECT id FROM daily_posts WHERE date = ?', 
+                'SELECT id FROM daily_posts WHERE date = %s', 
                 (today,)
             )
             return len(results) > 0
@@ -352,11 +351,6 @@ class DailyPoster:
                 FROM daily_posts 
                 ORDER BY date DESC 
                 LIMIT %s
-            ''' if self.db.is_postgres else '''
-                SELECT date, verse_reference, tweet_id, posted_at
-                FROM daily_posts 
-                ORDER BY date DESC 
-                LIMIT ?
             ''', (days,))
             
             return [

@@ -21,7 +21,7 @@ class InteractionHandler:
         self.bible_api = BibleAPI()
         self.dry_run = dry_run
         
-        # Initialize database manager (supports both SQLite and PostgreSQL)
+        # Initialize database manager (PostgreSQL on Railway)
         self.db = DatabaseManager()
         self.db.init_tables()
         
@@ -43,6 +43,7 @@ class InteractionHandler:
                 logger.info("No mentions found in recent history")
                 return 0
             
+            
             # Log all mentions found for visibility
             logger.info(f"Found {len(all_mentions)} mentions in recent history:")
             for i, mention in enumerate(all_mentions, 1):
@@ -52,7 +53,10 @@ class InteractionHandler:
             # Filter to only unprocessed mentions (check database for each)
             unprocessed_mentions = []
             for mention in all_mentions:
-                if not self._has_responded_to_tweet(mention['id']):
+                logger.info(f"🔍 Checking if we've responded to mention ID: {mention['id']}")
+                has_responded = self._has_responded_to_tweet(mention['id'])
+                logger.info(f"📊 _has_responded_to_tweet returned: {has_responded}")
+                if not has_responded:
                     unprocessed_mentions.append(mention)
                 else:
                     logger.info(f"Skipping already processed mention: {mention['id']}")
@@ -222,65 +226,39 @@ class InteractionHandler:
             user_id = str(mention['author_id']).strip()
             
             # Store interaction
-            if self.db.is_postgres:
-                self.db.execute_update('''
-                    INSERT INTO interactions 
-                    (tweet_id, user_id, username, mention_text, created_at, interaction_type)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (tweet_id) DO UPDATE SET
-                        user_id = EXCLUDED.user_id,
-                        username = EXCLUDED.username,
-                        mention_text = EXCLUDED.mention_text,
-                        created_at = EXCLUDED.created_at,
-                        interaction_type = EXCLUDED.interaction_type
-                ''', (
-                    tweet_id,
-                    user_id,
-                    user_info['username'] if user_info else None,
-                    mention['text'],
-                    mention['created_at'],
-                    'mention'
-                ))
-                
-                # Update user information
-                self.db.execute_update('''
-                    INSERT INTO users 
-                    (user_id, username, last_interaction, interaction_count)
-                    VALUES (%s, %s, %s, 1)
-                    ON CONFLICT (user_id) DO UPDATE SET
-                        username = EXCLUDED.username,
-                        last_interaction = EXCLUDED.last_interaction,
-                        interaction_count = users.interaction_count + 1
-                ''', (
-                    mention['author_id'],
-                    user_info['username'] if user_info else None,
-                    datetime.now()
-                ))
-            else:
-                self.db.execute_update('''
-                    INSERT OR REPLACE INTO interactions 
-                    (tweet_id, user_id, username, mention_text, created_at, interaction_type)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (
-                    tweet_id,
-                    user_id,
-                    user_info['username'] if user_info else None,
-                    mention['text'],
-                    mention['created_at'],
-                    'mention'
-                ))
-                
-                # Update user information
-                self.db.execute_update('''
-                    INSERT OR REPLACE INTO users 
-                    (user_id, username, last_interaction, interaction_count)
-                    VALUES (?, ?, ?, COALESCE((SELECT interaction_count FROM users WHERE user_id = ?) + 1, 1))
-                ''', (
-                    user_id,
-                    user_info['username'] if user_info else None,
-                    datetime.now(),
-                    user_id
-                ))
+            self.db.execute_update('''
+                INSERT INTO interactions 
+                (tweet_id, user_id, username, mention_text, created_at, interaction_type)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (tweet_id) DO UPDATE SET
+                    user_id = EXCLUDED.user_id,
+                    username = EXCLUDED.username,
+                    mention_text = EXCLUDED.mention_text,
+                    created_at = EXCLUDED.created_at,
+                    interaction_type = EXCLUDED.interaction_type
+            ''', (
+                tweet_id,
+                user_id,
+                user_info['username'] if user_info else None,
+                mention['text'],
+                mention['created_at'],
+                'mention'
+            ))
+            
+            # Update user information
+            self.db.execute_update('''
+                INSERT INTO users 
+                (user_id, username, last_interaction, interaction_count)
+                VALUES (%s, %s, %s, 1)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    last_interaction = EXCLUDED.last_interaction,
+                    interaction_count = users.interaction_count + 1
+            ''', (
+                mention['author_id'],
+                user_info['username'] if user_info else None,
+                datetime.now()
+            ))
             
         except Exception as e:
             logger.error(f"Error storing interaction: {e}")
@@ -298,10 +276,6 @@ class InteractionHandler:
                 UPDATE interactions 
                 SET response_text = %s, response_tweet_id = %s, responded_at = %s, status = 'completed'
                 WHERE tweet_id = %s
-            ''' if self.db.is_postgres else '''
-                UPDATE interactions 
-                SET response_text = ?, response_tweet_id = ?, responded_at = ?, status = 'completed'
-                WHERE tweet_id = ?
             ''', (response_text, response_id_str, datetime.now(), tweet_id_str))
             
             logger.info(f"✅ Successfully updated interaction response for tweet_id: {tweet_id_str}")
@@ -331,67 +305,41 @@ class InteractionHandler:
             
             logger.info(f"💾 Recording interaction: tweet_id={tweet_id_str}, reply_id={reply_tweet_id_str}, type={interaction_type}")
             
-            if self.db.is_postgres:
-                # Insert or update interaction with all information in one operation
-                self.db.execute_update('''
-                    INSERT INTO interactions 
-                    (tweet_id, user_id, mention_text, response_text, response_tweet_id, 
-                     created_at, responded_at, interaction_type, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (tweet_id) DO UPDATE SET
-                        user_id = EXCLUDED.user_id,
-                        mention_text = EXCLUDED.mention_text,
-                        response_text = EXCLUDED.response_text,
-                        response_tweet_id = EXCLUDED.response_tweet_id,
-                        responded_at = EXCLUDED.responded_at,
-                        interaction_type = EXCLUDED.interaction_type,
-                        status = 'completed'
-                ''', (
-                    tweet_id_str,
-                    user_id_str,
-                    tweet_text,
-                    response_text,
-                    reply_tweet_id_str,
-                    datetime.now(),  # created_at
-                    datetime.now(),  # responded_at
-                    interaction_type,
-                    'completed'
-                ))
-            else:
-                # SQLite version
-                self.db.execute_update('''
-                    INSERT OR REPLACE INTO interactions 
-                    (tweet_id, user_id, mention_text, response_text, response_tweet_id, 
-                     created_at, responded_at, interaction_type, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    tweet_id_str,
-                    user_id_str,
-                    tweet_text,
-                    response_text,
-                    reply_tweet_id_str,
-                    datetime.now(),  # created_at
-                    datetime.now(),  # responded_at
-                    interaction_type,
-                    'completed'
-                ))
+            # Insert or update interaction with all information in one operation
+            self.db.execute_update('''
+                INSERT INTO interactions 
+                (tweet_id, user_id, mention_text, response_text, response_tweet_id, 
+                 created_at, responded_at, interaction_type, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (tweet_id) DO UPDATE SET
+                    user_id = EXCLUDED.user_id,
+                    mention_text = EXCLUDED.mention_text,
+                    response_text = EXCLUDED.response_text,
+                    response_tweet_id = EXCLUDED.response_tweet_id,
+                    responded_at = EXCLUDED.responded_at,
+                    interaction_type = EXCLUDED.interaction_type,
+                    status = 'completed'
+            ''', (
+                tweet_id_str,
+                user_id_str,
+                tweet_text,
+                response_text,
+                reply_tweet_id_str,
+                datetime.now(),  # created_at
+                datetime.now(),  # responded_at
+                interaction_type,
+                'completed'
+            ))
             
             # Also update user information
-            if self.db.is_postgres:
-                self.db.execute_update('''
-                    INSERT INTO users 
-                    (user_id, last_interaction, interaction_count)
-                    VALUES (%s, %s, 1)
-                    ON CONFLICT (user_id) DO UPDATE SET
-                        last_interaction = EXCLUDED.last_interaction,
-                        interaction_count = users.interaction_count + 1
-                ''', (user_id_str, datetime.now()))
-            else:
-                self.db.execute_update('''
-                    INSERT OR REPLACE INTO users 
-                    (user_id, last_interaction, interaction_count)
-                    VALUES (?, ?, COALESCE((SELECT interaction_count FROM users WHERE user_id = ?) + 1, 1))
-                ''', (user_id_str, datetime.now(), user_id_str))
+            self.db.execute_update('''
+                INSERT INTO users 
+                (user_id, last_interaction, interaction_count)
+                VALUES (%s, %s, 1)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    last_interaction = EXCLUDED.last_interaction,
+                    interaction_count = users.interaction_count + 1
+            ''', (user_id_str, datetime.now()))
             
             logger.info(f"✅ Recorded interaction: tweet_id={tweet_id_str}, reply_id={reply_tweet_id_str}, type={interaction_type}")
             
@@ -406,16 +354,48 @@ class InteractionHandler:
         that quickly exhaust the monthly quota. The database is the source of truth.
         """
         try:
+            logger.info(f"🚀 _has_responded_to_tweet called with tweet_id: {tweet_id} (type: {type(tweet_id).__name__})")
+            logger.info(f"💾 Database type: PostgreSQL, URL: {self.db.database_url[:50]}...")
+            
+            # Debug: Show recent tweet_ids in database for comparison
+            try:
+                debug_query = 'SELECT tweet_id, response_tweet_id, status FROM interactions ORDER BY created_at DESC LIMIT 5'
+                debug_results = self.db.execute_query(debug_query)
+                if debug_results:
+                    existing_ids = []
+                    for r in debug_results:
+                        db_tweet_id = str(r.get('tweet_id', ''))
+                        db_response_id = r.get('response_tweet_id')
+                        db_status = r.get('status', 'unknown')
+                        existing_ids.append(f"{db_tweet_id} (response: {db_response_id}, status: {db_status})")
+                    logger.info(f"🔍 Recent tweet_ids in database: {existing_ids}")
+                    # Also show raw values for comparison
+                    raw_ids = [str(r.get('tweet_id', '')) for r in debug_results]
+                    logger.info(f"🔍 Raw tweet_id values: {[repr(id) for id in raw_ids]}")
+                else:
+                    logger.warning(f"⚠️  No interactions found in database!")
+            except Exception as debug_err:
+                logger.warning(f"⚠️  Could not fetch debug info: {debug_err}")
+            
             # Ensure tweet_id is a string for consistent database comparison
             tweet_id_str = str(tweet_id).strip()
             
-            # Check our local database only - no API calls to preserve quota
-            query = 'SELECT response_tweet_id, status FROM interactions WHERE tweet_id = %s' if self.db.is_postgres else 'SELECT response_tweet_id, status FROM interactions WHERE tweet_id = ?'
+            # Log the exact value we're searching for (helpful for debugging)
+            logger.info(f"🔎 Searching for tweet_id: '{tweet_id_str}' (length: {len(tweet_id_str)}, repr: {repr(tweet_id_str)})")
+            
+            # Check our database only - no API calls to preserve quota
+            query = 'SELECT response_tweet_id, status FROM interactions WHERE tweet_id = %s'
             logger.info(f"🔍 Checking database for tweet_id: '{tweet_id_str}' (type: {type(tweet_id_str).__name__})")
+            logger.info(f"📝 Query: {query}")
             
-            results = self.db.execute_query(query, (tweet_id_str,))
-            
-            logger.info(f"📊 Database query returned {len(results) if results else 0} result(s)")
+            try:
+                results = self.db.execute_query(query, (tweet_id_str,))
+                logger.info(f"📊 Database query returned {len(results) if results else 0} result(s)")
+            except Exception as query_error:
+                logger.error(f"❌ Database query failed: {query_error}")
+                import traceback
+                logger.error(f"Query error traceback: {traceback.format_exc()}")
+                raise  # Re-raise to be caught by outer try/except
             
             if results and len(results) > 0:
                 result = results[0]
@@ -450,8 +430,7 @@ class InteractionHandler:
         try:
             # Check last interaction time
             results = self.db.execute_query(
-                'SELECT last_interaction FROM users WHERE user_id = %s' if self.db.is_postgres else 
-                'SELECT last_interaction FROM users WHERE user_id = ?', 
+                'SELECT last_interaction FROM users WHERE user_id = %s', 
                 (user_id,)
             )
             
@@ -474,16 +453,10 @@ class InteractionHandler:
         try:
             one_hour_ago = datetime.now() - timedelta(hours=1)
             
-            if self.db.is_postgres:
-                results = self.db.execute_query(
-                    'SELECT COUNT(*) as count FROM interactions WHERE responded_at > %s AND status = %s',
-                    (one_hour_ago, 'completed')
-                )
-            else:
-                results = self.db.execute_query(
-                    'SELECT COUNT(*) as count FROM interactions WHERE responded_at > ? AND status = ?',
-                    (one_hour_ago, 'completed')
-                )
+            results = self.db.execute_query(
+                'SELECT COUNT(*) as count FROM interactions WHERE responded_at > %s AND status = %s',
+                (one_hour_ago, 'completed')
+            )
             
             count = results[0]['count']
             
