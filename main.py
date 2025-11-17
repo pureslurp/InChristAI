@@ -196,15 +196,6 @@ class InChristAI:
         except Exception as e:
             logger.error(f"Error in daily verse posting: {e}")
 
-    def _check_mentions(self):
-        """Scheduled task to check and respond to mentions"""
-        try:
-            logger.info("Checking for mentions...")
-            count = self.interaction_handler.process_mentions()
-            if count > 0:
-                logger.info(f"Processed {count} mentions")
-        except Exception as e:
-            logger.error(f"Error checking mentions: {e}")
 
     def _daily_cleanup(self):
         """Scheduled task for daily cleanup"""
@@ -253,7 +244,7 @@ class InChristAI:
             logger.info(f"📖 Bible Verse: {result.bible_verse['reference']}")
             
             # Step 4: Check if we've already responded to this tweet
-            if self._has_responded_to_tweet_db_only(result.selected_tweet.id):
+            if self.interaction_handler._has_responded_to_tweet(result.selected_tweet.id):
                 logger.info("🔍 Prayer search: Already responded to this tweet, skipping")
                 return True
             
@@ -294,40 +285,15 @@ class InChristAI:
             traceback.print_exc()
             return False
 
-    def _has_responded_to_tweet_db_only(self, tweet_id: str) -> bool:
-        """Check if we've responded to a tweet using only database (no API calls)"""
-        try:
-            results = self.interaction_handler.db.execute_query(
-                'SELECT response_tweet_id FROM interactions WHERE tweet_id = %s' if self.interaction_handler.db.is_postgres else 
-                'SELECT response_tweet_id FROM interactions WHERE tweet_id = ?', 
-                (tweet_id,)
-            )
-            
-            if results and results[0]['response_tweet_id'] is not None:
-                logger.info(f"Database shows we responded to {tweet_id}")
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.warning(f"Database check failed for tweet {tweet_id}: {e}")
-            return False  # Assume we haven't responded if database fails
-
     def _check_mentions(self):
-        """Scheduled task to check and respond to mentions (database-only to preserve rate limits)"""
+        """Scheduled task to check and respond to mentions"""
         try:
-            # Temporarily patch the interaction handler to use database-only checks
-            # This preserves the search rate limit for prayer search functionality
-            original_method = self.interaction_handler._has_responded_to_tweet
-            self.interaction_handler._has_responded_to_tweet = lambda tweet_id: self._has_responded_to_tweet_db_only(tweet_id)
-            
-            try:
-                count = self.interaction_handler.process_mentions()
-                return count > 0
-            finally:
-                # Restore original method
-                self.interaction_handler._has_responded_to_tweet = original_method
-                
+            # Use the real _has_responded_to_tweet method (already database-only, no API calls)
+            # No need for monkey-patching - the method in InteractionHandler is already optimized
+            count = self.interaction_handler.process_mentions()
+            if count > 0:
+                logger.info(f"Processed {count} mentions")
+            return count > 0
         except Exception as e:
             logger.error(f"Error checking mentions: {e}")
             return False
@@ -463,7 +429,7 @@ class InChristAI:
                 
             elif task == "prayer_search":
                 logger.info("Running prayer search and response...")
-                return self._search_and_respond_to_prayers()
+                return self._search_and_respond_to_prayers(dry_run=self.dry_run)
             
             else:
                 logger.error(f"Unknown task: {task}")

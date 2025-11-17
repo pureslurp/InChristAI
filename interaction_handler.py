@@ -357,6 +357,12 @@ class InteractionHandler:
             logger.info(f"🚀 _has_responded_to_tweet called with tweet_id: {tweet_id} (type: {type(tweet_id).__name__})")
             logger.info(f"💾 Database type: PostgreSQL, URL: {self.db.database_url[:50]}...")
             
+            # CRITICAL: Verify we're using PostgreSQL, not SQLite
+            if not self.db.is_postgres:
+                logger.error(f"❌ CRITICAL ERROR: Database is not PostgreSQL! Type: {type(self.db).__name__}, URL: {self.db.database_url}")
+                logger.error(f"   This will cause incorrect query results. Expected PostgreSQL but got: {self.db.database_url}")
+                # Still try to query, but log the error
+            
             # Debug: Show recent tweet_ids in database for comparison
             try:
                 debug_query = 'SELECT tweet_id, response_tweet_id, status FROM interactions ORDER BY created_at DESC LIMIT 5'
