@@ -287,17 +287,23 @@ class DatabaseManager:
             return {}
     
     def cleanup_old_data(self, days: int = 30) -> int:
-        """Clean up old interaction data"""
+        """Clean up old interaction data
+        
+        Only deletes old PENDING interactions (never responded to).
+        Keeps all completed/failed interactions to prevent duplicate responses.
+        """
         try:
             if self.is_postgres:
+                # Only delete old pending interactions (never responded to)
+                # Keep all completed/failed interactions to prevent duplicate responses
                 deleted_count = self.execute_update(
-                    "DELETE FROM interactions WHERE created_at < NOW() - INTERVAL '%s days'" % days
+                    "DELETE FROM interactions WHERE created_at < NOW() - INTERVAL '%s days' AND status = 'pending'" % days
                 )
             else:
                 deleted_count = self.execute_update(
-                    "DELETE FROM interactions WHERE created_at < datetime('now', '-%d days')" % days
+                    "DELETE FROM interactions WHERE created_at < datetime('now', '-%d days') AND status = 'pending'" % days
                 )
-            logger.info(f"Cleaned up {deleted_count} old interactions")
+            logger.info(f"Cleaned up {deleted_count} old pending interactions (kept all completed/failed interactions)")
             return deleted_count
         except Exception as e:
             logger.error(f"Error cleaning up old data: {e}")

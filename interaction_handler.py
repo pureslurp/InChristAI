@@ -53,13 +53,10 @@ class InteractionHandler:
             # Filter to only unprocessed mentions (check database for each)
             unprocessed_mentions = []
             for mention in all_mentions:
-                logger.info(f"🔍 Checking if we've responded to mention ID: {mention['id']}")
-                has_responded = self._has_responded_to_tweet(mention['id'])
-                logger.info(f"📊 _has_responded_to_tweet returned: {has_responded}")
-                if not has_responded:
+                if not self._has_responded_to_tweet(mention['id']):
                     unprocessed_mentions.append(mention)
                 else:
-                    logger.info(f"Skipping already processed mention: {mention['id']}")
+                    logger.debug(f"Skipping already processed mention: {mention['id']}")
             
             if not unprocessed_mentions:
                 logger.info("No unprocessed mentions found (all have been responded to)")
@@ -160,7 +157,7 @@ class InteractionHandler:
             if response_text.strip().upper() == "NO_REPLY":
                 logger.info(f"AI decided not to reply to mention {mention['id']} (combative/inappropriate content)")
                 # Still record the interaction but mark as "no response needed"
-                self._update_interaction_response(mention['id'], "NO_REPLY", None)
+                self._update_interaction_response(mention['id'], "NO_REPLY", None, status='no_reply')
                 return True  # This is successful - we appropriately chose not to respond
             
             # Post reply
@@ -173,6 +170,10 @@ class InteractionHandler:
                 return True
             else:
                 logger.error(f"Failed to post reply to mention {mention['id']}")
+                # CRITICAL: Update database even on failure to prevent retry loops
+                # Mark as 'failed' status so we know we attempted but don't retry
+                self._update_interaction_response(mention['id'], response_text, None, status='failed')
+                logger.warning(f"⚠️  Marked mention {mention['id']} as 'failed' in database to prevent retry")
                 return False
             
         except Exception as e:
@@ -263,25 +264,41 @@ class InteractionHandler:
         except Exception as e:
             logger.error(f"Error storing interaction: {e}")
 
-    def _update_interaction_response(self, mention_id: str, response_text: str, reply_tweet_id: str):
-        """Update interaction with response information"""
+    def _update_interaction_response(self, mention_id: str, response_text: str, reply_tweet_id: str, status: str = 'completed'):
+        """Update interaction with response information (creates record if it doesn't exist)
+        
+        Args:
+            mention_id: The tweet ID we're responding to
+            response_text: The response text we generated
+            reply_tweet_id: The ID of our reply tweet (None if failed)
+            status: Status to set ('completed', 'failed', 'no_reply', etc.)
+        """
         try:
             # Ensure tweet_id is a string for consistent database queries
             tweet_id_str = str(mention_id).strip()
             response_id_str = str(reply_tweet_id).strip() if reply_tweet_id else None
             
-            logger.info(f"💾 Updating interaction response: tweet_id={tweet_id_str}, response_id={response_id_str}")
+            logger.info(f"💾 Updating interaction response: tweet_id={tweet_id_str}, response_id={response_id_str}, status={status}")
             
+            # Use INSERT ... ON CONFLICT to ensure record exists (upsert)
+            # This handles the case where _store_interaction failed or record was deleted
             self.db.execute_update('''
-                UPDATE interactions 
-                SET response_text = %s, response_tweet_id = %s, responded_at = %s, status = 'completed'
-                WHERE tweet_id = %s
-            ''', (response_text, response_id_str, datetime.now(), tweet_id_str))
+                INSERT INTO interactions 
+                (tweet_id, response_text, response_tweet_id, responded_at, status)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (tweet_id) DO UPDATE SET
+                    response_text = EXCLUDED.response_text,
+                    response_tweet_id = EXCLUDED.response_tweet_id,
+                    responded_at = EXCLUDED.responded_at,
+                    status = EXCLUDED.status
+            ''', (tweet_id_str, response_text, response_id_str, datetime.now(), status))
             
-            logger.info(f"✅ Successfully updated interaction response for tweet_id: {tweet_id_str}")
+            logger.info(f"✅ Successfully updated/created interaction response for tweet_id: {tweet_id_str} with status: {status}")
             
         except Exception as e:
             logger.error(f"Error updating interaction response: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
     def _record_interaction(self, tweet_id: str, user_id: str, tweet_text: str, response_text: str, reply_tweet_id: str, interaction_type: str = 'interaction'):
         """Record a complete interaction (tweet and reply) in the database
@@ -354,74 +371,41 @@ class InteractionHandler:
         that quickly exhaust the monthly quota. The database is the source of truth.
         """
         try:
-            logger.info(f"🚀 _has_responded_to_tweet called with tweet_id: {tweet_id} (type: {type(tweet_id).__name__})")
-            logger.info(f"💾 Database type: PostgreSQL, URL: {self.db.database_url[:50]}...")
-            
-            # CRITICAL: Verify we're using PostgreSQL, not SQLite
-            if not self.db.is_postgres:
-                logger.error(f"❌ CRITICAL ERROR: Database is not PostgreSQL! Type: {type(self.db).__name__}, URL: {self.db.database_url}")
-                logger.error(f"   This will cause incorrect query results. Expected PostgreSQL but got: {self.db.database_url}")
-                # Still try to query, but log the error
-            
-            # Debug: Show recent tweet_ids in database for comparison
-            try:
-                debug_query = 'SELECT tweet_id, response_tweet_id, status FROM interactions ORDER BY created_at DESC LIMIT 5'
-                debug_results = self.db.execute_query(debug_query)
-                if debug_results:
-                    existing_ids = []
-                    for r in debug_results:
-                        db_tweet_id = str(r.get('tweet_id', ''))
-                        db_response_id = r.get('response_tweet_id')
-                        db_status = r.get('status', 'unknown')
-                        existing_ids.append(f"{db_tweet_id} (response: {db_response_id}, status: {db_status})")
-                    logger.info(f"🔍 Recent tweet_ids in database: {existing_ids}")
-                    # Also show raw values for comparison
-                    raw_ids = [str(r.get('tweet_id', '')) for r in debug_results]
-                    logger.info(f"🔍 Raw tweet_id values: {[repr(id) for id in raw_ids]}")
-                else:
-                    logger.warning(f"⚠️  No interactions found in database!")
-            except Exception as debug_err:
-                logger.warning(f"⚠️  Could not fetch debug info: {debug_err}")
+            # Verify database is initialized
+            if not hasattr(self, 'db') or self.db is None:
+                logger.error(f"❌ CRITICAL: Database not initialized!")
+                return False
             
             # Ensure tweet_id is a string for consistent database comparison
             tweet_id_str = str(tweet_id).strip()
             
-            # Log the exact value we're searching for (helpful for debugging)
-            logger.info(f"🔎 Searching for tweet_id: '{tweet_id_str}' (length: {len(tweet_id_str)}, repr: {repr(tweet_id_str)})")
-            
             # Check our database only - no API calls to preserve quota
             query = 'SELECT response_tweet_id, status FROM interactions WHERE tweet_id = %s'
-            logger.info(f"🔍 Checking database for tweet_id: '{tweet_id_str}' (type: {type(tweet_id_str).__name__})")
-            logger.info(f"📝 Query: {query}")
-            
-            try:
-                results = self.db.execute_query(query, (tweet_id_str,))
-                logger.info(f"📊 Database query returned {len(results) if results else 0} result(s)")
-            except Exception as query_error:
-                logger.error(f"❌ Database query failed: {query_error}")
-                import traceback
-                logger.error(f"Query error traceback: {traceback.format_exc()}")
-                raise  # Re-raise to be caught by outer try/except
+            results = self.db.execute_query(query, (tweet_id_str,))
             
             if results and len(results) > 0:
                 result = results[0]
                 response_tweet_id = result.get('response_tweet_id')
                 status = result.get('status', 'unknown')
                 
-                logger.info(f"📋 Database record found: response_tweet_id={response_tweet_id}, status={status}")
-                
-                # Check if we have a response tweet ID (not NULL)
+                # Check if we have a response tweet ID (not NULL) - means we successfully responded
                 if response_tweet_id is not None and str(response_tweet_id).strip():
-                    logger.info(f"✅ Database shows we responded to {tweet_id_str} (response_id: {response_tweet_id})")
+                    logger.info(f"✅ Already responded to tweet {tweet_id_str} (response_id: {response_tweet_id})")
                     return True
+                # Check if status is 'failed' - we attempted but failed, don't retry immediately
+                elif status == 'failed':
+                    logger.info(f"⚠️  Previous attempt to respond to {tweet_id_str} failed - skipping retry")
+                    return True  # Return True to prevent retry
+                # Check if status is 'no_reply' - AI decided not to reply
+                elif status == 'no_reply':
+                    logger.info(f"⚠️  Previously decided not to reply to {tweet_id_str}")
+                    return True  # Return True to prevent retry
                 else:
-                    logger.warning(f"⚠️  Database record exists but response_tweet_id is NULL/empty for {tweet_id_str} (status: {status})")
-                    logger.warning(f"   This might mean the reply failed or was marked as NO_REPLY")
+                    # Record exists but no response_tweet_id - might be pending or incomplete
+                    logger.debug(f"Database record exists for {tweet_id_str} but response_tweet_id is NULL (status: {status})")
                     return False
             else:
                 # No record found in database
-                logger.info(f"❌ No database record found for tweet_id: {tweet_id_str}")
-                logger.info(f"   This means we haven't responded to this tweet yet")
                 return False
             
         except Exception as e:
