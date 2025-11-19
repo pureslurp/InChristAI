@@ -191,7 +191,7 @@ Remember: You represent Christ's love in every interaction. Be authentic, caring
         base_prompt += "\n\nGenerate a tweet-length response (under 280 characters) that is warm, genuine, and helpful. Do NOT include @username mentions - Twitter will handle reply tagging automatically."
         base_prompt += "\n\nIMPORTANT: If the person is being combative, rude, argumentative, or if responding would seem annoying/intrusive, simply respond with 'NO_REPLY' instead of generating a response. Only reply when it would genuinely be helpful and welcomed."
         base_prompt += "\n\nExamples of when to use NO_REPLY:"
-        base_prompt += "\n- The user is asking for prayer facetiously or sarcastically"
+        base_prompt += "\n- The user is asking for prayer facetiously or sarcastically, e.g. praying for a sports team to win"
         base_prompt += "\n- Hostile language or personal attacks"
         base_prompt += "\n- Mocking religion or faith"
         base_prompt += "\n- Obvious spam or promotional content"
