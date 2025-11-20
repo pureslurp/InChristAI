@@ -422,7 +422,7 @@ class TwitterAPI:
             logger.error(f"Failed to get user info for {user_id}: {e}")
             return None
     
-    def search_tweets(self, query: str, count: int = 10, include_thread_context: bool = False) -> List[Dict]:
+    def search_tweets(self, query: str, count: int = 5, include_thread_context: bool = False) -> List[Dict]:
         """Search for tweets containing specific keywords using direct HTTP requests
         
         WARNING: X API Free tier allows only 100 API calls per MONTH

@@ -33,7 +33,7 @@ class PrayerBotTester:
         self.dry_run = dry_run
         self.use_real_tweets = use_real_tweets
         
-    def test_prayer_search_workflow(self, search_term="pray", count=10):
+    def test_prayer_search_workflow(self, search_term="pray", count=5):
         """Test the complete prayer search and response workflow"""
         try:
             logger.info("🧪 Starting Prayer Search Test")
